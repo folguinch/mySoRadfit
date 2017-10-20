@@ -27,8 +27,6 @@ class Hyperion(Container):
             angle: inclination angle (model config must be pre-loaded)
             dtype: data type.
         """
-        assert incl is not None or (angle is not None and \
-                self.config is not None)
 
         if key=='model':
             assert os.path.isfile(file_name)
@@ -38,6 +36,8 @@ class Hyperion(Container):
             self.data[key] = load_data_by_type(file_name, dtype.lower(), 
                     REGISTERED_CLASSES)
         elif key=='sed':
+            assert incl is not None or (angle is not None and \
+                    self.config is not None)
             wlg, F = self.data['model'].get_sed(group=0,
                     distance=source.distance.cgs.value, inclination=incl,
                     units='Jy')
