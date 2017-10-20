@@ -1,10 +1,12 @@
 import os
 
+import numpy as np
 import astropy.units as u
 from hyperion.model import ModelOutput
 
 from ..objects.container import Container
-from ..register import REGISTERED_CLASSES
+from ..objects.sed import SED
+from ..objects.register import REGISTERED_CLASSES
 
 class Hyperion(Container):
     """Creates a container for Hyperion output data.
@@ -41,7 +43,7 @@ class Hyperion(Container):
             wlg, F = self.data['model'].get_sed(group=0,
                     distance=source.distance.cgs.value, inclination=incl,
                     units='Jy')
-            data = np.array(zip(wlg, F), dtype=[('wlg', float),('F', float)])
+            data = np.array(zip(wlg, F[0]), dtype=[('wlg', float),('F', float)])
             self.data[key] = SED(data=data, 
                     units={'wlg':1.*u.micron, 'F':1.*u.Jy})
         else:
