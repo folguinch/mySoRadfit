@@ -3,15 +3,15 @@ from configparser import ConfigParser
 
 from myutils.logger import get_logger
 
-from rt_fitter.objects.source import LoadSource
-from rt_fitter.rt.hyperion_model import Hyperion
+from MySoRadfit.objects.source import LoadSource
+from MySoRadfit.rt.hyperion_model import Hyperion
 #from utils.parsers.args import LoadConfig
 
 def main():
     """Main function for the RT fitter"""
     # Important standard files and directories
     DIRECTORIES = 'directories.cfg'
-    LOOKUP = ['~/.config/rt_fitter', './rt_fitter', './rt_fitter/config']
+    LOOKUP = ['~/.config/MySoRadfit', './MySoRadfit', './MySoRadfit/config']
 
     # Logger
     logger = get_logger(__name__)
