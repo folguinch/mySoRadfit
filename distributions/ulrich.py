@@ -3,7 +3,7 @@ import astropy.units as u
 import astropy.constants as ct
 from hyperion.densities.UlrichEnvelope import solve_mu0
 
-def density(r, th, phi, params):
+def density(r, th, params):
     """Calculate the density in the given position.
 
     The fixes and warnings are obtained from hyperion.
@@ -40,7 +40,7 @@ def density(r, th, phi, params):
 
     # Outside the envelope
     rmin = params.getfloat('Envelope','rmin') *\
-            params.getquantity('Envelope','rout').cgs
+            params.getquantity('Envelope','rsub').cgs
     mask = (r.cgs > params.getquantity('Envelope','rout').cgs) | \
             (r.cgs < rmin)
     density[mask] = 0.
