@@ -2,6 +2,15 @@ import numpy as np
 from hyperion.util.integrate import integrate_powerlaw
 
 def flared(r, th, params):
+    """Calculate the density distribution of a flared disc.
+
+    Function from hyperion.
+
+    Parameters:
+        r: spherical coordinate radial distance.
+        th: polar angle.
+        params: model parameters.
+    """
 
     # Reference density
     rmin = params.getfloat('Disc','rmin') *\
@@ -29,6 +38,3 @@ def flared(r, th, params):
     density[r.cgs>rmax] = 0.
 
     return density
-
-
-

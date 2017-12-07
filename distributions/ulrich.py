@@ -11,7 +11,7 @@ def density(r, th, params):
     Parameters:
         r: spherical coordinate radial distance.
         th: polar angle.
-        phi: azimuthal angle.
+        params: models parameters
     """
     # Reference density
     rho0 = params.getquantity('Envelope', 'mdot').cgs / \
