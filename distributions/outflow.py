@@ -34,8 +34,8 @@ def density(r, th, params):
     # Mask
     z0 = r0 * np.cos(theta0.to(u.radian))
     R0 = r0 * np.sin(theta0.to(u.radian))
-    z = r.cgs * np.cos(theta0.to(u.radian))
-    R = r.cgs * np.sin(theta0.to(u.radian))
+    z = r.cgs * np.cos(th.to(u.radian))
+    R = r.cgs * np.sin(th.to(u.radian))
     zcav = z0 * (R/R0)**params.getfloat('Cavity','power')
     mask = np.abs(z) < zcav
     density[mask] = 0.
