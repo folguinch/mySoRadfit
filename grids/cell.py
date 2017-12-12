@@ -9,18 +9,27 @@ class Cell(object):
         xwalls: x-coordinate of the cell walls.
         ywalls: y-coordinate of the cell walls.
         zwalls: z-coordinate of the cell walls.
+        props: cell properties
     """
 
-    def __init__(self, *walls):
+    def __init__(self, *walls, **props):
         """Create a new cell object.
 
         Parameters:
             walls (tuple): the cell walls.
+            props (dict): cell properties.
         """
         assert len(walls)==6
         self.xwalls = walls[0:2]
         self.ywalls = walls[2:4]
         self.zwalls = walls[4:6]
+        self.props = props
+
+    def __getitem__(self, key):
+        return self.props[key]
+
+    def __setitem__(self,key, val):
+        self.props[key] = val
 
     @property
     def center(self):
