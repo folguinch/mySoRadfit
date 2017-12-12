@@ -28,6 +28,7 @@ class Cell(object):
         center = []
         for walls in self:
             center += [(walls[0]+walls[1])/2]
+        return center
 
     def __iter__(self):
         return self
