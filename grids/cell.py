@@ -9,7 +9,7 @@ class Cell(object):
         xwalls: x-coordinate of the cell walls.
         ywalls: y-coordinate of the cell walls.
         zwalls: z-coordinate of the cell walls.
-        props: cell properties
+        props: cell physical properties.
     """
 
     def __init__(self, *walls, **props):
@@ -17,7 +17,7 @@ class Cell(object):
 
         Parameters:
             walls (tuple): the cell walls.
-            props (dict): cell properties.
+            props (dict): cell physical properties.
         """
         assert len(walls)==6
         self.xwalls = walls[0:2]
@@ -47,6 +47,12 @@ class Cell(object):
             step = np.abs(walls[0]-walls[1])
             vol = vol * step
         return vol
+
+    @property
+    def mass(self):
+        """Cell mass."""
+        assert 'density' in self.props
+        return self['density']*self.volume
 
     def __iter__(self):
         return self
