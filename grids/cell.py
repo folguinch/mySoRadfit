@@ -30,6 +30,15 @@ class Cell(object):
             center += [(walls[0]+walls[1])/2]
         return center
 
+    @property
+    def volume(self):
+        """Cell volume."""
+        vol = 1.
+        for walls in self:
+            step = np.abs(walls[0]-walls[1])
+            vol = vol * step
+        return vol
+
     def __iter__(self):
         return self
 
