@@ -1,3 +1,6 @@
+import numpy as np
+from hyperion.grid import OctreeGrid
+
 from .grid import GridABC
 
 class Octree(GridABC):
@@ -37,7 +40,8 @@ class Octree(GridABC):
         which is a Cell object.
 
         The density function input are the coordinates of a point and the
-        parameters defining the grid.
+        parameters defining the grid. The density is the total density
+        independent from the dust properties.
 
         Parameters:
             params (myConfigParser): density configuration parameters.
@@ -66,3 +70,17 @@ class Octree(GridABC):
                         criterion, max_depth, step+1)
         return refined, grid
 
+    def to_hyperion(self, model):
+        """Create a hyperion Octree grid.
+
+        The density for each dust component must be set separatedly.
+        
+        Parameters:
+            model (hyperion.Model): hyperion model to fill.
+        """
+        # Create grid
+        x, y, z = self.grid[0].center
+        dx, dy, dz = [di/2. for di in self.grid[0].sizes]
+        model.set_octree_grid(x, y, z, dx.cgs, dy.cgs, dz.cgs, self.refined)
+
+        return model
