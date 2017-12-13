@@ -54,6 +54,11 @@ class Cell(object):
         assert 'density' in self.props
         return self['density']*self.volume
 
+    @property
+    def sizes(self):
+        """Cell size per axis."""
+        return np.abs(walls[0]-walls[1]) for walls in self
+
     def __iter__(self):
         return self
 
