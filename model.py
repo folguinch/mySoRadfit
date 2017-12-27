@@ -44,7 +44,7 @@ class Model(object):
 
         # Load configuration
         if config and not params and not setup:
-            self.config = load_config(config, name)
+            self.load_config(config, name)
         else:
             self.config['DEFAULT'] = {'name': name, 'params': params,
                     'setup': setup}
@@ -73,7 +73,7 @@ class Model(object):
 
     def _load_parser(self, filename):
         parser = myConfigParser(interpolation=ExtendedInterpolation())
-        parser = _load_configparser(parser, filename)
+        parser = self._load_configparser(parser, filename)
 
         return parser
 
