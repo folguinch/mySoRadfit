@@ -1,4 +1,5 @@
 import os, argparse
+from collections import OrderedDict
 #from abc import ABCMeta, abstractmethod
 from configparser import ExtendedInterpolation
 
@@ -10,18 +11,19 @@ class Model(object):
 
     Attributes:
         config (myConfigParser): model configuration file name.
-        params (myConfigParser): model parameters file name.
+        params (OrderedDict): model parameters file name.
         setup (myConfigParser): model rt and output setup file name.
         logger: logging system.
     """
 
     logger = get_logger(__name__)
 
-    def __init__(self, name='model', config=None, params=None, setup=None):
+    def __init__(self, name='model', config=None, params=None, setup=None,
+            source_names=['source'], locs=[(0,0,0)]):
         """Initialize the model.
 
         A model can be created with just a name. A generic name is provided,
-        thus if none of the parameters are given no exception is rised.
+        thus if none of the parameters are given no exception is raised.
 
         If a model *name* and a configuration file are given, the name in the
         configuration file will be replaced by *name*.
@@ -32,24 +34,34 @@ class Model(object):
         parameter *config* is ignored.
 
         Parameters:
-            name: model name.
-            config: model configuration file.
-            params: model parameter file.
-            setup: model setup file.
+            name (str): model name.
+            config (str): model configuration file.
+            params (str or list): model parameter file or files for each model 
+                source.
+            setup (str): model setup file.
+            source_names (list): names of the model sources.
+            locs (list): location of each model source.
         """
         # Initialize 
         self.config = myConfigParser(interpolation=ExtendedInterpolation())
-        self.params = None
+        self.params = OrderedDict()
         self.setup = None
 
         # Load configuration
         if config and not params and not setup:
             self.load_config(config, name)
-        else:
-            self.config['DEFAULT'] = {'name': name, 'params': params,
-                    'setup': setup}
-            if params:
-                self.load_params(params)
+        elif params:
+            assert len(source_name)==len(locs)
+            self.config['DEFAULT'] = {'name': name, 'setup': setup}
+            for i,(name,loc) in enumerate(zip(source_name, locs)):
+                assert len(loc)==3
+                self.config[name] = {'loc': loc}
+                pname = os.path.realpath(os.path.expanduser(params[i]))
+                if os.path.isfile(pname):
+                    self.config[name]['params'] = pname
+                elif os.path.isfile(params):
+                    self.config[name]['params'] = params
+            self.load_params()
             if setup:
                 self.load_setup(setup)
 
@@ -97,8 +109,7 @@ class Model(object):
         # Load setup and params
         if self.config.get('DEFAULT','setup'):
             self.load_setup(self.config.get('DEFAULT','setup'))
-        if self.config.get('DEFAULT','params'):
-            self.load_params(self.config.get('DEFAULT','params'))
+        self.load_params()
 
     def load_setup(self, filename):
         """Load setup file.
@@ -109,14 +120,11 @@ class Model(object):
         self.logger.info('Loading model setup')
         self.setup = self._load_parser(filename)
 
-    def load_params(self, filename):
-        """Load parameters file.
-
-        Parameters:
-            filename: name of the parameter file.
-        """
-        self.logger.info('Loading model parameters')
-        self.params = self._load_parser(filename)
+    def load_params(self):
+        """Load parameter file for each model source."""
+        for section in self.config.sections():
+            self.logger.info('Loading parameters for: %s', section)
+            self.params[section] = self._load_parser(self.config[section]['params'])
 
 class ModelfromConfig(argparse.Action):
     """Load model from configuration file as command line parameter"""
