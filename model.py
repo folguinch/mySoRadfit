@@ -1,4 +1,4 @@
-import os
+import os, argparse
 #from abc import ABCMeta, abstractmethod
 from configparser import ExtendedInterpolation
 
@@ -86,9 +86,13 @@ class Model(object):
         """
         if name is None and config.get('DEFAULT', 'name'):
             name = config['DEFAULT']['name']
-
+        
+        # Load file and update name
+        self.logger.info('Loading model configuration file')
         self.config = self._load_configparser(self.config, config)
-        self.name = name
+        if name:
+            self.name = name
+        self.logger.info('Model name: %s', self.name)
 
         # Load setup and params
         if self.config.get('DEFAULT','setup'):
@@ -102,6 +106,7 @@ class Model(object):
         Parameters:
             filename: name of the setup file.
         """
+        self.logger.info('Loading model setup')
         self.setup = self._load_parser(filename)
 
     def load_params(self, filename):
@@ -110,4 +115,13 @@ class Model(object):
         Parameters:
             filename: name of the parameter file.
         """
+        self.logger.info('Loading model parameters')
         self.params = self._load_parser(filename)
+
+class ModelfromConfig(argparse.Action):
+    """Load model from configuration file as command line parameter"""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        config = os.path.realpath(os.path.expanduser(values))
+        model = Model(config=config)
+        return setattr(namespace, self.dest, model)
