@@ -6,6 +6,9 @@ from configparser import ExtendedInterpolation
 from myutils.logger import get_logger
 from myutils.myconfigparser import myConfigParser
 
+from .grids.octree import Octree
+from .distributions.yso import YSO
+
 class Model(object):
     """Model class.
 
@@ -124,7 +127,33 @@ class Model(object):
         """Load parameter file for each model source."""
         for section in self.config.sections():
             self.logger.info('Loading parameters for: %s', section)
-            self.params[section] = self._load_parser(self.config[section]['params'])
+            self.params[section] = YSO(self.config[section]['params'],
+                    loc=self.config.getfloatlist(section, 'loc'))
+
+    def build_grid(self, criterion, max_depth=10):
+        """Build the grid.
+        
+        Parameters:
+            criterion (function): refinement criterion.
+            max_depth (int, default=10): maximum level of recursion.
+        """
+        if self.setup['grid']['type'] == 'octree':
+            self.logger.info('Building Octree grid')
+            grid = Octree(self.setup.getquantity('grid','xsize'),
+                    self.setup.getquantity('grid','ysize'),
+                    self.setup.getquantity('grid','zsize'))
+            grid.build(self.get_density(), criterion, max_depth=max_depth)
+
+        return grid
+
+    def get_density(self):
+        """Get the density function."""
+        def density(x, y, z):
+            den = 0.
+            for yso in self.sources:
+                den = den + yso(x, y, z)
+            return den
+        return density
 
 class ModelfromConfig(argparse.Action):
     """Load model from configuration file as command line parameter"""
