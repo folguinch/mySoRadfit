@@ -69,16 +69,16 @@ class YSO(object):
         th = np.arccos((z-self.loc[2])/r)
 
         # Disk
-        if 'Disc' in self.parmas:
-            disc = discs.flared(r, th, params)
+        if 'Disc' in self.params:
+            disc = discs.flared(r, th, self.params)
         else:
             disc = 0.
 
         # Envelope and cavity
         if 'Envelope' in self.params:
-            envelope = ulrich.density(r, th, params)
+            envelope = ulrich.density(r, th, self.params)
             if 'Cavity' in self.params:
-                cavity, mask = outflow(r, th, params)
+                cavity, mask = outflow.density(r, th, self.params)
                 cavity[cavity>envelope] = envelope[cavity>envelope]
                 envelope[~mask] = 0.
         else:

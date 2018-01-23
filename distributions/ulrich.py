@@ -1,7 +1,7 @@
 import numpy as np
 import astropy.units as u
 import astropy.constants as ct
-from hyperion.densities.UlrichEnvelope import solve_mu0
+from hyperion.densities.ulrich_envelope import solve_mu0
 
 def density(r, th, params):
     """Calculate the density in the given position.
@@ -16,7 +16,7 @@ def density(r, th, params):
     # Reference density
     rho0 = params.getquantity('Envelope', 'mdot').cgs / \
             (4.*np.pi * np.sqrt(ct.G.cgs*params.getquantity('Star','m').cgs*\
-            params.getquantity('rc').cgs**3))
+            params.getquantity('Envelope','rc').cgs**3))
 
     # Angle variables
     mu = np.cos(th.to(u.rad).value)
@@ -25,14 +25,14 @@ def density(r, th, params):
 
     # Density
     density = (r.cgs/rc)**-1.5 * (1.+mu/mu0)**-0.5 * \
-            (mu/m0 + 2*mu0**2 * rc/r.cgs)**-1
+            (mu/mu0 + 2*mu0**2 * rc/r.cgs)**-1
     density = rho0 * density
 
     # Close to the singularity
     mid1 = (np.abs(mu) < 1.e-10) & (r.cgs.value < rc.value)
     density[mid1] = rho0 / np.sqrt(r[mid1].cgs / rc) \
             / (1. - r[mid1].cgs / rc) / 2.
-    mid2 = (np.abs(mu) < 1.e-10) & (r > self.rc)
+    mid2 = (np.abs(mu) < 1.e-10) & (r.cgs.value > rc.value)
     density[mid2] = rho0 / np.sqrt(2. * r[mid2].cgs / rc - 1) \
             / (r[mid2].cgs / rc - 1.)
     if np.any((np.abs(mu) < 1.e-10) & (r.cgs == rc)):

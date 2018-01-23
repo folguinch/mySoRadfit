@@ -1,4 +1,5 @@
 import numpy as np
+import astropy.units as u
 from hyperion.util.integrate import integrate_powerlaw
 
 def flared(r, th, params):
@@ -21,7 +22,7 @@ def flared(r, th, params):
     r0 = params.getquantity('Disc','r0').cgs
     h0 = params.getquantity('Disc','h0').cgs
     intg = integrate_powerlaw(rmin, rmax, 1.0 + p)
-    intg = int1 * r0**-p
+    intg = intg * r0**-p
     intg = (2.*np.pi)**1.5 * h0 * intg
     rho0 = params.getquantity('Disc','m').cgs/intg
 
