@@ -47,5 +47,41 @@ def density(r, th, params):
 
     return density
 
-def velocity(r, th, phi, params):
-    pass
+def velocity(r, th, params):
+    """Calculate the Ulrich velocity distribution in the given points.
+
+    Parameters:
+        r: spherical coordinate radial distance.
+        th: polar angle.
+        params: model parameters.
+
+    Returns:
+        vr, vth, vphi: the components of the velocity along each direction.
+    """
+    # Keplerian
+    v0 = np.sqrt(ct.G.cgs * params.getquantity('Star','m').cgs / r.cgs)
+    assert v0.cgs.unit == u.cm/u.s
+
+    # Angle variables
+    mu = np.cos(th.to(u.rad).value)
+    rc = params.getquantity('Envelope','rc').cgs
+    mu0 = solve_mu0(r.cgs.value/rc.value, mu)
+    theta0 = np.arccos(mu0) * u.rad
+
+    # Velocity components
+    rot_dir = params.getfloat('Velocity','rot_dir')
+    assert np.abs(rot_dir)==1.
+    vr = -1. * np.sqrt(1. + mu/mu0)
+    vth = (mu0-mu)/np.sin(th) * np.sqrt(1. + mu/mu0)
+    vphi = rot_dir * np.sin(theta0)/np.sin(th) * np.sqrt(1. - mu/mu0)
+
+    # Outside the envelope
+    rmin = params.getfloat('Envelope','rmin') *\
+            params.getquantity('Envelope','rsub').cgs
+    mask = (r.cgs > params.getquantity('Envelope','rout').cgs) | \
+            (r.cgs < rmin)
+    vr[mask] = 0.
+    vth[mask] = 0.
+    vphi[mask] = 0.
+
+    return v0*vr, v0*vth, v0*vphi

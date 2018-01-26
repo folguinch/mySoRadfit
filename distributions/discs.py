@@ -1,5 +1,6 @@
 import numpy as np
 import astropy.units as u
+import astropy.constants as ct
 from hyperion.util.integrate import integrate_powerlaw
 
 def flared(r, th, params):
@@ -39,3 +40,38 @@ def flared(r, th, params):
     density[r.cgs>rmax] = 0.
 
     return density
+
+def keplerian_rotation(r, th, params):
+    """Calculate the velocity distribution of a Keplerian disc.
+
+    At the moment it only uses the stellar mass and not all the mass inside a
+    radius *r*. Infall motion is not included at the moment.
+
+    Parameters:
+        r: spherical coordinate radial distance.
+        th: polar angle.
+        params: model parameters.
+
+    Returns:
+        vr, vth, vphi: the velocity for each spherical coordinate direction.
+    """
+    # Velocity components
+    if params.getboolean('Velocity', 'rotation_only'):
+        rot_dir = params.getfloat('Velocity','rot_dir')
+        r_cyl = r.cgs * np.sin(th)
+        vphi = np.sqrt(ct.G.cgs * params.getquantity('Star','m').cgs / r_cyl)
+        vphi = rot_dir * vphi
+
+        # Outside the disc
+        rmax = params.getquantity('Disc','rmax').cgs
+        vphi[r.cgs>rmax] = 0.
+        assert vphi.cgs.unit == u.cm/u.s
+
+        # Other components
+        vr = np.zeros(vphi.shape) * vphi.unit
+        vth = np.zeros(vphi.shape) * vphi.unit
+    else:
+        raise NotImplementedError
+
+
+    return vr, vth, vphi
