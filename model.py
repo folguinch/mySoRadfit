@@ -5,6 +5,7 @@ from configparser import ExtendedInterpolation
 
 from myutils.logger import get_logger
 from myutils.myconfigparser import myConfigParser
+from myutils.array_utils import load_struct_array
 
 from .grids.octree import Octree
 from .distributions.yso import YSO
@@ -14,14 +15,15 @@ class Model(object):
 
     Attributes:
         config (myConfigParser): model configuration file name.
-        params (OrderedDict): model parameters file name.
-        setup (myConfigParser): model rt and output setup file name.
+        params (OrderedDict): model physical parameters.
+        setup (myConfigParser): model rt setup.
+        images (myConfigParser): model images setup.
         logger: logging system.
     """
 
     logger = get_logger(__name__)
 
-    def __init__(self, name='model', config=None, params=None, setup=None,
+    def __init__(self, name=None, config=None, params=None, setup=None,
             source_names=['source'], locs=[(0,0,0)]):
         """Initialize the model.
 
@@ -49,13 +51,14 @@ class Model(object):
         self.config = myConfigParser(interpolation=ExtendedInterpolation())
         self.params = OrderedDict()
         self.setup = None
+        self.images = None
 
         # Load configuration
         if config and not params and not setup:
             self.load_config(config, name)
         elif params:
-            assert len(source_name)==len(locs)
-            self.config['DEFAULT'] = {'name': name, 'setup': setup}
+            assert len(source_names)==len(locs)
+            self.config['DEFAULT'] = {'name': name or 'model', 'setup': setup}
             for i,(name,loc) in enumerate(zip(source_name, locs)):
                 assert len(loc)==3
                 self.config[name] = {'loc': loc}
@@ -67,6 +70,8 @@ class Model(object):
             self.load_params()
             if setup:
                 self.load_setup(setup)
+            if images:
+                raise NotImplementedError
 
     @property
     def name(self):
@@ -99,9 +104,6 @@ class Model(object):
             config: configuration file name.
             name: model name.
         """
-        if name is None and config.get('DEFAULT', 'name'):
-            name = config['DEFAULT']['name']
-        
         # Load file and update name
         self.logger.info('Loading model configuration file')
         self.config = self._load_configparser(self.config, config)
@@ -112,6 +114,8 @@ class Model(object):
         # Load setup and params
         if self.config.get('DEFAULT','setup'):
             self.load_setup(self.config.get('DEFAULT','setup'))
+        if self.config.get('DEFAULT','images'):
+            self.load_image_setup(self.config.get('DEFAULT','images'))
         self.load_params()
 
     def load_setup(self, filename):
@@ -123,12 +127,36 @@ class Model(object):
         self.logger.info('Loading model setup')
         self.setup = self._load_parser(filename)
 
+    def load_image_setup(self, filename):
+        """Load the image setup file.
+
+        Parameters:
+            filename: name of the image setup file.
+        """
+        self.logger.info('Loading image setup')
+        self.images = self._load_parser(filename)
+
     def load_params(self):
         """Load parameter file for each model source."""
         for section in self.config.sections():
             self.logger.info('Loading parameters for: %s', section)
             self.params[section] = YSO(self.config[section]['params'],
                     loc=self.config.getfloatlist(section, 'loc'))
+
+    def load_grids(self, rt):
+        """Load the grids from file.
+        
+        Parameters:
+            rt: RT transfer config section.
+        """
+        grids = []
+        for grid in self.setup.getlist(rt, 'grids'):
+            self.logger.info('Loading grid: %s', os.path.basename(grid))
+            fname = os.path.realpath(os.path.expanduser(grid))
+            grid = load_struct_array(fname, usecols=None)
+            grids += [grid]
+
+        return grids
 
     def build_grid(self, criterion, max_depth=10):
         """Build the grid.
