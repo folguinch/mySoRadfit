@@ -67,7 +67,6 @@ class YSO(object):
         """
         # Convert coordinates to spherical
         r, th, phi = cart_to_sph(x, y, z, pos0=self.loc)
-        th = th*u.rad
         #r = np.sqrt((x-self.loc[0])**2 + (y-self.loc[1])**2 + \
         #        (z-self.loc[2])**2)
         ##th = np.arccos((z-self.loc[2])/r)
@@ -154,5 +153,31 @@ class YSO(object):
         vphi[ind] = vphi_disc.cgs[ind]
 
         return vel_sph_to_cart(vr, vth, vphi, th, phi)
+
+    def abundance(self, temperature):
+        """Molecular abundance.
+
+        Parameters:
+            temperature: the temperature distribution.
+        """
+        Ts = self.params.getquantity('Abundance', 't')
+        abn = np.array(self.params.getfloatlist('Abundance','abn'))
+        abundance = np.ones(temperature.shape) * np.min(abn)
+
+        for i,T in enumerate(Ts):
+            if i==0:
+                abundance[temperature<T] = abn[i]
+            elif i==len(Ts)-1:
+                ind = (temperature<T) & (temperature>=Ts[i-1])
+                abundance[ind] = abn[i]
+                abundance[temperature>=T] = abn[i+1]
+            else:
+                ind = (temperature<T) & (temperature>=Ts[i-1])
+                abundance[ind] = abn[i]
+
+        return abundance
+
+                
+
 
 
