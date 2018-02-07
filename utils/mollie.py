@@ -1,4 +1,3 @@
-from __future__ import print_function
 import os
 import struct
 from string import Template
@@ -10,10 +9,11 @@ import astropy.constants as ct
 from hyperion.model import ModelOutput
 from scipy.interpolate import griddata
 from myutils.logger import get_logger
-from Plotter.mesh_plotter import NMeshPlotter
 from myutils.math import rebin_irregular_nd, map_sph_to_cart_axisym
+from myutils.classes.data_3d import Data3D
+from Plotter.mesh_plotter import NMeshPlotter
 
-def fill_inner_radius(r, temperature, yso):
+def fill_inner_radius(r, th, temperature, density, yso):
     rstar = yso.params.getquantity('Star','r')
     rmin = yso.params.getfloat('Disc','rmin') *\
             yso.params.getquantity('Disc','rsub')
@@ -24,8 +24,17 @@ def fill_inner_radius(r, temperature, yso):
     # Inside sublimation radius
     ind = (r.cgs>rstar) & (r.cgs<rmin.cgs)
     temperature[ind] = tstar*((rstar.cgs/r.cgs[ind])**(1./2.1)).value
+    # Fill density
+    x = r*np.sin(th)
+    z = r*np.cos(th)
+    density[ind] = yso(x[ind], np.zeros(z[ind].shape), z[ind], ignore_rim=True)
 
-    return temperature
+    return temperature, density
+
+def write_fits(dirname, **kwargs):
+    for key, val in kwargs.items():
+        hdu = fits.PrimaryHDU(val)
+        hdu.writeto(os.path.join(dirname, key+'.fits'), overwrite=True)
 
 def get_walls(*args):
     walls = []
@@ -138,7 +147,8 @@ def set_physical_props(yso, grids, template, logger=get_logger(__name__)):
         R, TH = np.meshgrid(r, th)
         DR, DTH = np.meshgrid(dr, dt)
         vol_sph = R**2 * np.sin(TH) * DR * DTH
-        temperature[0,:,:] = fill_inner_radius(R, temperature[0,:,:], yso)
+        temperature[0,:,:], density[0,:,:] = fill_inner_radius(R, TH,
+                temperature[0,:,:], density[0,:,:], yso)
     else:
         raise NotImplementedError
 
@@ -187,7 +197,6 @@ def set_physical_props(yso, grids, template, logger=get_logger(__name__)):
         # Number density
         dens = dens / (2.33 * mH)
         dens[dens.cgs<=0./u.cm**3] = 10./u.cm**3
-        print(np.nanmax(dens).to(1./u.cm**3))
 
         # Temperature
         temp = rebin_2Dsph_to_cart(temperature, (xi, yi, zi), yso, pos=(r, th), 
@@ -201,6 +210,9 @@ def set_physical_props(yso, grids, template, logger=get_logger(__name__)):
         else:
             dz = None
         vx, vy, vz = yso.velocity(x, y, z, min_height_to_disc=dz)
+        vx = np.reshape(vx, dens.shape, order='F')
+        vy = np.reshape(vy, dens.shape, order='F')
+        vz = np.reshape(vz, dens.shape, order='F')
         #vx = vx.to(u.km/u.s)
         #vy = vy.to(u.km/u.s)
         #vz = vz.to(u.km/u.s)
@@ -224,6 +236,13 @@ def set_physical_props(yso, grids, template, logger=get_logger(__name__)):
         c_s = ct.k_B * temp / (atoms * amu)
         linewidth = np.sqrt(yso.params.getquantity('Velocity', 'linewidth')**2
                 + c_s)
+
+        # Write FITS
+        write_fits(os.path.dirname(os.path.expanduser(template)), 
+                **{'temp%i'%i: temp.value, 'dens%i'%i: dens.cgs.value, 
+                'vx%i'%i: vx.cgs.value, 'vy%i'%i: vy.cgs.value, 'vz%i'%i:
+                vz.cgs.value, 'abn%i'%i: abundance,
+                'lwidth%i'%i: linewidth.cgs.value})
 
         # Write template
         sci_fmt = lambda x: '%.8e' % x
@@ -432,6 +451,7 @@ def load_model(model, source, filename, logger, old=False, older=False,
 
     header_template['CRVAL1'] = rightascension.to(u.deg).value
     header_template['CRVAL2'] = declination.to(u.deg).value
+    header_template['EPOCH'] = 2000
 
     if pa or source.get_quantity('pa') is not None:
         header_template['CROTA1'] = 0
