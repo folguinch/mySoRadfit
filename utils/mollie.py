@@ -153,8 +153,8 @@ def set_physical_props(yso, grids, template, logger=get_logger(__name__)):
         raise NotImplementedError
 
     # Open template
-    with open(os.path.expanduser(template)) as ftemp:
-        templ = Template(ftemp.read())
+    #with open(os.path.expanduser(template)) as ftemp:
+    #    templ = Template(ftemp.read())
 
     for i, grid in enumerate(grids):
         x = grid[0]['x'] * grid[1]['x']
@@ -207,26 +207,26 @@ def set_physical_props(yso, grids, template, logger=get_logger(__name__)):
                 'lwidth%i'%i: linewidth.cgs.value})
 
         # Write template
-        sci_fmt = lambda x: '%.8e' % x
-        flt_fmt = lambda x: '%.8f' % x
-        dens = ','.join(map(sci_fmt, np.ravel(dens.cgs.value,order='F')))
-        temp = ','.join(map(flt_fmt, np.ravel(temp.value,order='F')))
-        vx = ','.join(map(flt_fmt, np.ravel(vx.cgs.value,order='F')))
-        vy = ','.join(map(flt_fmt, np.ravel(vy.cgs.value,order='F')))
-        vz = ','.join(map(flt_fmt, np.ravel(vz.cgs.value,order='F')))
-        abundance = ','.join(map(sci_fmt, np.ravel(abundance,order='F')))
-        linewidth = ','.join(map(flt_fmt, np.ravel(linewidth.cgs.value,order='F')))
-        templ = templ.safe_substitute(**{'temp%i'%i: temp, 'dens%i'%i: dens, 
-            'vx%i'%i: vx, 'vy%i'%i: vy, 'vz%i'%i: vz, 'abn%i'%i: abundance,
-            'linewidth%i'%i: linewidth})
-        if i!=len(grids)-1:
-            templ = Template(templ)
+        #sci_fmt = lambda x: '%.8e' % x
+        #flt_fmt = lambda x: '%.8f' % x
+        #dens = ','.join(map(sci_fmt, np.ravel(dens.cgs.value,order='F')))
+        #temp = ','.join(map(flt_fmt, np.ravel(temp.value,order='F')))
+        #vx = ','.join(map(flt_fmt, np.ravel(vx.cgs.value,order='F')))
+        #vy = ','.join(map(flt_fmt, np.ravel(vy.cgs.value,order='F')))
+        #vz = ','.join(map(flt_fmt, np.ravel(vz.cgs.value,order='F')))
+        #abundance = ','.join(map(sci_fmt, np.ravel(abundance,order='F')))
+        #linewidth = ','.join(map(flt_fmt, np.ravel(linewidth.cgs.value,order='F')))
+        #templ = templ.safe_substitute(**{'temp%i'%i: temp, 'dens%i'%i: dens, 
+        #    'vx%i'%i: vx, 'vy%i'%i: vy, 'vz%i'%i: vz, 'abn%i'%i: abundance,
+        #    'linewidth%i'%i: linewidth})
+        #if i!=len(grids)-1:
+        #    templ = Template(templ)
 
-    # Save file
-    dirname = os.path.dirname(os.path.expanduser(template))
-    fname = 'define_model.c'
-    with open(os.path.join(dirname,fname),'w') as out:
-        out.write(templ)
+    ## Save file
+    #dirname = os.path.dirname(os.path.expanduser(template))
+    #fname = 'define_model.c'
+    #with open(os.path.join(dirname,fname),'w') as out:
+    #    out.write(templ)
 
 def write_setup(section, model, template, rt='mollie'):
     # Open template
