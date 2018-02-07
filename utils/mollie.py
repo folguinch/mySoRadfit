@@ -152,26 +152,6 @@ def set_physical_props(yso, grids, template, logger=get_logger(__name__)):
     else:
         raise NotImplementedError
 
-    ## Density plot
-    #styles = ['jet']
-    #ylevs = np.array([-1000., 0., 1000., 10000., 20000., 150000]) * u.au
-    #zlevs = np.array([-1000., 0., 1000.]) * u.au
-    #vmin = {'den':[-25, -21, -20], 'temp':[5, 5, 30]}
-    #vmax = {'den':[-12, -14, -12], 'temp':[200, 200, 300]}
-    #fig1 = NMeshPlotter(styles=styles, nxcbar=1, rows=3, cols=len(ylevs), 
-    #        sharey=True, sharex=True, xsize=4., ysize=4., left=0.8, right=1, 
-    #        top=0.6, hspace=0.3)
-    #fig2 = NMeshPlotter(styles=styles, nxcbar=1, rows=3, cols=len(ylevs), 
-    #        sharey=True, sharex=True, xsize=4., ysize=4., left=0.8, right=1, 
-    #        top=0.6, hspace=0.3)
-    #fig3 =  NMeshPlotter(styles=styles, nxcbar=1, rows=4, cols=len(ylevs), 
-    #        sharey=True, sharex=True, xsize=4., ysize=4., left=0.8, right=1, 
-    #        top=0.6, hspace=0.3)
-    #fig4 =  NMeshPlotter(styles=styles, nxcbar=1, rows=4, cols=len(zlevs), 
-    #        sharey=True, sharex=True, xsize=4., ysize=4., left=0.8, right=1, 
-    #        top=0.6, hspace=0.3)
-    #axes1,axes2,axes3,axes4 = [], [], [], []
-
     # Open template
     with open(os.path.expanduser(template)) as ftemp:
         templ = Template(ftemp.read())
@@ -189,11 +169,6 @@ def set_physical_props(yso, grids, template, logger=get_logger(__name__)):
                 rebin=i==2, interp=True, weights=vol_sph, logger=logger)
         dens = dens * u.g/u.cm**3
         mH = ct.m_p + ct.m_e
-        ## Density plot
-        #den_log = np.log10(dens.cgs.value)
-        #den_log[np.isnan(den_log)] = -30
-        #axes1 = plot_mesh_slices(fig1, den_log, xi, yi, zi, ylevs.to(yi.unit), 
-        #        axes=axes1)
         # Number density
         dens = dens / (2.33 * mH)
         dens[dens.cgs<=0./u.cm**3] = 10./u.cm**3
@@ -213,19 +188,6 @@ def set_physical_props(yso, grids, template, logger=get_logger(__name__)):
         vx = np.reshape(vx, dens.shape, order='F')
         vy = np.reshape(vy, dens.shape, order='F')
         vz = np.reshape(vz, dens.shape, order='F')
-        #vx = vx.to(u.km/u.s)
-        #vy = vy.to(u.km/u.s)
-        #vz = vz.to(u.km/u.s)
-
-        ## Temperature
-        #axes2 = plot_mesh_slices(fig2, temp, xi, yi, zi, ylevs.to(yi.unit), 
-        #        axes=axes2, cblabel='Temperature (K)', vmin=vmin['temp'],
-        #        vmax=vmax['temp'])
-        ## Velocity over density
-        #axes3 = plot_field_slices(fig3, vx, vy, vz, x, y, z, den_log, ylevs=ylevs,
-        #        axes=axes3)
-        #axes4 = plot_field_slices(fig4, vx, vy, vz, x, y, z, den_log, zlevs=zlevs,
-        #        axes=axes4)
 
         # Abundance
         abundance = yso.abundance(temp)
@@ -265,11 +227,6 @@ def set_physical_props(yso, grids, template, logger=get_logger(__name__)):
     fname = 'define_model.c'
     with open(os.path.join(dirname,fname),'w') as out:
         out.write(templ)
-
-    #fig1.savefig('hyperion_grid_3d_density.png')
-    #fig2.savefig('hyperion_grid_3d_temperature.png')
-    #fig3.savefig('hyperion_grid_3d_velocity_xz.png')
-    #fig4.savefig('hyperion_grid_3d_velocity_xy.png')
 
 def write_setup(section, model, template, rt='mollie'):
     # Open template
