@@ -3,7 +3,7 @@ import astropy.units as u
 import astropy.constants as ct
 from hyperion.densities.ulrich_envelope import solve_mu0
 
-def density(r, th, params):
+def density(r, th, params, ignore_rim=True):
     """Calculate the density in the given position.
 
     The fixes and warnings are obtained from hyperion.
@@ -39,15 +39,20 @@ def density(r, th, params):
         raise OverflowError('Point close to singularity')
 
     # Outside the envelope
-    rmin = params.getfloat('Envelope','rmin') *\
-            params.getquantity('Envelope','rsub').cgs
+    if ignore_rim:
+        #rmin = params.getfloat('Velocity','rmin') *\
+        #        params.getquantity('Disc','rsub').cgs
+        rmin = params.getquantity('Star','r').cgs
+    else:
+        rmin = params.getfloat('Envelope','rmin') *\
+                params.getquantity('Envelope','rsub').cgs
     mask = (r.cgs > params.getquantity('Envelope','rout').cgs) | \
             (r.cgs < rmin)
     density[mask] = 0.
 
     return density
 
-def velocity(r, th, params):
+def velocity(r, th, params, ignore_rim=False):
     """Calculate the Ulrich velocity distribution in the given points.
 
     Parameters:
@@ -76,8 +81,11 @@ def velocity(r, th, params):
     vphi = rot_dir * np.sin(theta0)/np.sin(th) * np.sqrt(1. - mu/mu0)
 
     # Outside the envelope
-    rmin = params.getfloat('Envelope','rmin') *\
-            params.getquantity('Envelope','rsub').cgs
+    if ignore_rim:
+        rmin = params.getquantity('Star','r').cgs
+    else:
+        rmin = params.getfloat('Velocity','rmin') *\
+                params.getquantity('Envelope','rsub').cgs
     mask = (r.cgs > params.getquantity('Envelope','rout').cgs) | \
             (r.cgs < rmin)
     vr[mask] = 0.

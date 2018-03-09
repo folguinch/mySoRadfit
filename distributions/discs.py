@@ -3,7 +3,7 @@ import astropy.units as u
 import astropy.constants as ct
 from hyperion.util.integrate import integrate_powerlaw
 
-def flared(r, th, params):
+def flared(r, th, params, ignore_rim=False):
     """Calculate the density distribution of a flared disc.
 
     Function from hyperion.
@@ -36,12 +36,18 @@ def flared(r, th, params):
 
     # Density
     density = rho0 * (r0/R)**(beta-p) * np.exp(-0.5*(z/h)**2)
-    density[r.cgs<rmin] = 0.
+    if not ignore_rim:
+        density[r.cgs<rmin] = 0.
+    else:
+    #    rmin = params.getfloat('Velocity','rmin') *\
+    #            params.getquantity('Disc','rsub').cgs
+        rmin = params.getquantity('Star','r').cgs
+        density[r.cgs<rmin] = 0.
     density[r.cgs>rmax] = 0.
 
     return density
 
-def keplerian_rotation(r, th, params):
+def keplerian_rotation(r, th, params, ignore_rim=False):
     """Calculate the velocity distribution of a Keplerian disc.
 
     At the moment it only uses the stellar mass and not all the mass inside a
@@ -67,9 +73,19 @@ def keplerian_rotation(r, th, params):
         vphi[r.cgs>rmax] = 0.
         assert vphi.cgs.unit == u.cm/u.s
 
+        # Inner rim
+        if ignore_rim:
+            rmin = params.getquantity('Star','r').cgs
+            vphi[r.cgs<rmin] = 0.
+        else:
+            rmin = params.getfloat('Velocity','rmin') *\
+                    params.getquantity('Disc','rsub').cgs
+            vphi[r.cgs<rmin] = 0.
+
         # Other components
         vr = np.zeros(vphi.shape) * vphi.unit
         vth = np.zeros(vphi.shape) * vphi.unit
+    
     else:
         raise NotImplementedError
 

@@ -23,7 +23,7 @@ def get_mask(r, th, params):
 
     return mask
 
-def density(r, th, params):
+def density(r, th, params, ignore_rim=False):
     """Cavity density distribution.
 
     The distribution is assumed to be a power law, so constant density has a
@@ -51,21 +51,21 @@ def density(r, th, params):
             params.getquantity('Cavity','rsub').cgs
     rmax = params.getquantity('Cavity','rout').cgs
     density[r.cgs>rmax] = 0.
-    density[r.cgs<rmin] = 0.
+    if not ignore_rim:
+        density[r.cgs<rmin] = 0.
+    else:
+    #    rmin = params.getfloat('Velocity','rmin') *\
+    #            params.getquantity('Disc','rsub').cgs
+        rmin = params.getquantity('Star','r').cgs
+        density[r.cgs<rmin] = 0.
 
     # Mask
     mask = get_mask(r, th, params)
-    #z0 = r0 * np.cos(theta0.to(u.radian))
-    #R0 = r0 * np.sin(theta0.to(u.radian))
-    #z = r.cgs * np.cos(th.to(u.radian))
-    #R = r.cgs * np.sin(th.to(u.radian))
-    #zcav = z0 * (R/R0)**params.getfloat('Cavity','power')
-    #mask = np.abs(z) < zcav
     density[mask] = 0.
 
     return density, mask
 
-def velocity(r, th, params):
+def velocity(r, th, params, ignore_rim=False):
     """Outflow velocity distribution.
 
     Parameters:
@@ -95,6 +95,15 @@ def velocity(r, th, params):
         vr[r.cgs>rmax] = 0.
         mask = get_mask(r, th, params)
         vr[mask] = 0.
+
+        # Inside rim
+        if ignore_rim:
+            rmin = params.getquantity('Star','r').cgs
+            vr[r.cgs<rmin] = 0.
+        else:
+            rmin = params.getfloat('Velocity','rmin') *\
+                    params.getquantity('Cavity','rsub').cgs
+            vr[r.cgs<rmin] = 0.
 
         # Velocity cap
         try:
