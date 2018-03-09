@@ -156,7 +156,9 @@ class Model(object):
             grid = load_struct_array(fname, usecols=None)
             grids += [grid]
 
-        return grids
+        cell_sizes = self.setup.getintlist(rt, 'cell_sizes')
+
+        return grids, cell_sizes
 
     def build_grid(self, criterion, max_depth=10):
         """Build the grid.
