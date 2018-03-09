@@ -1,1 +1,1 @@
-from Model import Model, ModelfromConfig
+from .model import Model, ModelfromConfig
