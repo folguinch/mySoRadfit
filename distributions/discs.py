@@ -3,7 +3,7 @@ import astropy.units as u
 import astropy.constants as ct
 from hyperion.util.integrate import integrate_powerlaw
 
-def flared(r, th, params, ignore_rim=False):
+def flared(r, th, params, component='dust'):
     """Calculate the density distribution of a flared disc.
 
     Function from hyperion.
@@ -12,16 +12,28 @@ def flared(r, th, params, ignore_rim=False):
         r: spherical coordinate radial distance.
         th: polar angle.
         params: model parameters.
+        component (default=dust): component for the inner rim.
+
+    Note:
+        The inner rim is defined by the dust sublimation radius times a factor
+        which can depend in the *component* parameter. If a different component
+        is included you need to define ```rim_<component>``` in the model
+        parameter configuration file.
     """
 
     # Reference density
-    rmin = params.getfloat('Disc','rmin') *\
-            params.getquantity('Disc','rsub').cgs
+    dust_rmin = params.getfloat('Disc','rmin_dust')
+    rsub = params.getquantity('Disc','rsub').cgs
+    #rmin = params.getfloat('Disc','rmin') *\
+    #        params.getquantity('Disc','rsub').cgs
+    rmin = dust_inrim * rsub
     rmax = params.getquantity('Disc','rmax').cgs
     beta = params.getfloat('Disc','beta')
     p = beta - params.getfloat('Disc','alpha')
     r0 = params.getquantity('Disc','r0').cgs
     h0 = params.getquantity('Disc','h0').cgs
+    # This integral is to set the dust mass of the disc, thus the inner rim of
+    # the dust should be used.
     intg = integrate_powerlaw(rmin, rmax, 1.0 + p)
     intg = intg * r0**-p
     intg = (2.*np.pi)**1.5 * h0 * intg
@@ -34,20 +46,26 @@ def flared(r, th, params, ignore_rim=False):
     # Scale height
     h = h0 * (R/r0)**beta
 
-    # Density
+    # Density evaluated in all points
     density = rho0 * (r0/R)**(beta-p) * np.exp(-0.5*(z/h)**2)
-    if not ignore_rim:
-        density[r.cgs<rmin] = 0.
+
+    # Special cases
+    if component!='dust':
+        comp_rmin = params.getfloat('Disc','rmin_%s' % component)
+        density[r.cgs<rsub.cgs*comp_rmin] = 0.
     else:
-    #    rmin = params.getfloat('Velocity','rmin') *\
-    #            params.getquantity('Disc','rsub').cgs
-        rmin = params.getquantity('Star','r').cgs
-        density[r.cgs<rmin] = 0.
+        density[r.cgs<rmin.cgs] = 0.
+
+    # Inside the star
+    rstar = params.getquantity('Star','r').cgs
+    density[r.cgs<rstar] = 0.
+
+    # Outside the disc
     density[r.cgs>rmax] = 0.
 
     return density
 
-def keplerian_rotation(r, th, params, ignore_rim=False):
+def keplerian_rotation(r, th, params, component='dust'):
     """Calculate the velocity distribution of a Keplerian disc.
 
     At the moment it only uses the stellar mass and not all the mass inside a
@@ -57,6 +75,7 @@ def keplerian_rotation(r, th, params, ignore_rim=False):
         r: spherical coordinate radial distance.
         th: polar angle.
         params: model parameters.
+        component (default=dust): component for the inner rim.
 
     Returns:
         vr, vth, vphi: the velocity for each spherical coordinate direction.
@@ -74,13 +93,13 @@ def keplerian_rotation(r, th, params, ignore_rim=False):
         assert vphi.cgs.unit == u.cm/u.s
 
         # Inner rim
-        if ignore_rim:
-            rmin = params.getquantity('Star','r').cgs
-            vphi[r.cgs<rmin] = 0.
-        else:
-            rmin = params.getfloat('Velocity','rmin') *\
-                    params.getquantity('Disc','rsub').cgs
-            vphi[r.cgs<rmin] = 0.
+        rsub = params.getquantity('Disc','rsub').cgs
+        comp_rmin = params.getfloat('Disc','rmin_%s' % component)
+        vphi[r.cgs<rsub*comp_rmin] = 0.
+
+        # Inside the star
+        rstar = params.getquantity('Star','r').cgs
+        vphi[r.cgs<rstar] = 0.
 
         # Other components
         vr = np.zeros(vphi.shape) * vphi.unit

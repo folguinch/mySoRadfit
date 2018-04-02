@@ -61,13 +61,13 @@ class YSO(object):
         self.params = self.load_config(params)
         self.loc = loc
 
-    def __call__(self, x, y, z, ignore_rim=False):
+    def __call__(self, x, y, z, component='dust'):
         """Density distribution.
 
         Parameters:
             x, y, z (floats): position where the density is evaluated.
         """
-        disc, envelope, cavity = self.density(x, y, z, ignore_rim=ignore_rim)
+        disc, envelope, cavity = self.density(x, y, z, component=component)
 
         return disc + envelope + cavity
 
@@ -128,7 +128,7 @@ class YSO(object):
         hdu.writeto(fname, overwrite=True)
 
 
-    def density(self, x, y, z, ignore_rim=False, save_components=False,
+    def density(self, x, y, z, component='dust', save_components=False,
             from_file=False):
         """Calculates and returns the density distribution by components.
 
@@ -153,16 +153,16 @@ class YSO(object):
 
         # Disk
         if 'Disc' in self.params:
-            disc = discs.flared(r, th, self.params, ignore_rim=ignore_rim)
+            disc = discs.flared(r, th, self.params, component=component)
         else:
             disc = 0.
 
         # Envelope and cavity
         if 'Envelope' in self.params:
-            envelope = ulrich.density(r, th, self.params, ignore_rim=ignore_rim)
+            envelope = ulrich.density(r, th, self.params, component=component)
             if 'Cavity' in self.params:
                 cavity, mask = outflow.density(r, th, self.params,
-                        ignore_rim=ignore_rim)
+                        component=component)
                 cavity[cavity>envelope] = envelope[cavity>envelope]
                 envelope[~mask] = 0.
         else:
@@ -188,7 +188,7 @@ class YSO(object):
 
         return disc, envelope, cavity
 
-    def velocity(self, x, y, z, ignore_rim=False, disc_dens=None, 
+    def velocity(self, x, y, z, component='dust', disc_dens=None, 
             env_dens=None, cav_dens=None):
         """Velocity distribution.
 
@@ -206,24 +206,29 @@ class YSO(object):
         # Velocity in Envelope and cavity
         if self.params.get('Velocity', 'envelope', fallback='').lower() == 'ulrich':
             # Envelope
-            vr_env, vth_env, vphi_env = ulrich.velocity(r, th, self.params)
+            vr_env, vth_env, vphi_env = ulrich.velocity(r, th, self.params,
+                    component=component)
         # Cavity
-        vr_out, vth_out, vphi_out, mask = outflow.velocity(r, th, self.params)
+        vr_out, vth_out, vphi_out, mask = outflow.velocity(r, th, self.params,
+                component=component)
         vr_env[~mask] = 0.
         vth_env[~mask] = 0.
         vphi_env[~mask] = 0.
 
         # Disc
         vr_disc, vth_disc, vphi_disc = discs.keplerian_rotation(r, th, 
-                self.params, ignore_rim=ignore_rim)
+                self.params, component=component)
         ind = r.cgs<=rdisc.cgs
+        vr_disc[~mask] = 0.
+        vth_disc[~mask] = 0.
+        vphi_disc[~mask] = 0.
         vr_env[ind] = 0.
         vth_env[ind] = 0.
         vphi_env[ind] = 0.
         
         # Combine
         if disc_dens is None and env_dens is None and cav_dens is None:
-            disc, envelope, cavity = self.density(x, y, z, ignore_rim=ignore_rim)
+            disc, envelope, cavity = self.density(x, y, z, component=component)
         else:
             disc, envelope, cavity = disc_dens, env_dens, cav_dens
         envelope[ind] = 0.
@@ -280,8 +285,7 @@ class YSO(object):
 
         return vel_sph_to_cart(vr, vth, vphi, th, phi)
 
-    def get_density_velocity(self, x, y, z, temperature=None, ignore_rim=False,
-            nquad=1):
+    def get_all(self, x, y, z, temperature=None, component='dust', nquad=1):
         """Optimized function for obtaining the 3-D density and the velocity
         simultaneously.
 
@@ -328,9 +332,9 @@ class YSO(object):
             subz = z[zind[0]:zind[1]+1,yind[0]:yind[1]+1,xind[0]:xind[1]+1]
 
             # Evaluate
-            dens = self.density(subx, suby, subz, ignore_rim=ignore_rim)
-            vel = self.velocity(subx, suby, subz, ignore_rim=ignore_rim,
-                    disc_dens=dens[0], env_dens=dens[1], cav_dens=dens[1])
+            dens = self.density(subx, suby, subz, component=component)
+            vel = self.velocity(subx, suby, subz, component=component,
+                    disc_dens=dens[0], env_dens=dens[1], cav_dens=dens[2])
             if temperature is not None:
                 t = temperature(subx, suby, subz)
                 temp[zind[0]:zind[1]+1,yind[0]:yind[1]+1,xind[0]:xind[1]+1] = \

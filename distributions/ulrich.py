@@ -3,7 +3,7 @@ import astropy.units as u
 import astropy.constants as ct
 from hyperion.densities.ulrich_envelope import solve_mu0
 
-def density(r, th, params, ignore_rim=True):
+def density(r, th, params, component='dust'):
     """Calculate the density in the given position.
 
     The fixes and warnings are obtained from hyperion.
@@ -12,6 +12,7 @@ def density(r, th, params, ignore_rim=True):
         r: spherical coordinate radial distance.
         th: polar angle.
         params: models parameters.
+        component (default=dust): component for the inner rim.
     """
     # Reference density
     rho0 = params.getquantity('Envelope', 'mdot').cgs / \
@@ -39,26 +40,26 @@ def density(r, th, params, ignore_rim=True):
         raise OverflowError('Point close to singularity')
 
     # Outside the envelope
-    if ignore_rim:
-        #rmin = params.getfloat('Velocity','rmin') *\
-        #        params.getquantity('Disc','rsub').cgs
-        rmin = params.getquantity('Star','r').cgs
-    else:
-        rmin = params.getfloat('Envelope','rmin') *\
-                params.getquantity('Envelope','rsub').cgs
+    rsub = params.getquantity('Envelope','rsub').cgs
+    comp_rmin = params.getfloat('Envelope','rmin_%s' % component)
     mask = (r.cgs > params.getquantity('Envelope','rout').cgs) | \
-            (r.cgs < rmin)
+            (r.cgs < rsub*comp_rmin)
     density[mask] = 0.
+
+    # Check inside the star
+    rstar = params.getquantity('Star','r').cgs
+    density[r.cgs<rstar] = 0.
 
     return density
 
-def velocity(r, th, params, ignore_rim=False):
+def velocity(r, th, params, component='dust'):
     """Calculate the Ulrich velocity distribution in the given points.
 
     Parameters:
         r: spherical coordinate radial distance.
         th: polar angle.
         params: model parameters.
+        component (default=dust): component for the inner rim.
 
     Returns:
         vr, vth, vphi: the components of the velocity along each direction.
@@ -81,13 +82,11 @@ def velocity(r, th, params, ignore_rim=False):
     vphi = rot_dir * np.sin(theta0)/np.sin(th) * np.sqrt(1. - mu/mu0)
 
     # Outside the envelope
-    if ignore_rim:
-        rmin = params.getquantity('Star','r').cgs
-    else:
-        rmin = params.getfloat('Velocity','rmin') *\
-                params.getquantity('Envelope','rsub').cgs
+    rsub = params.getquantity('Envelope','rsub').cgs
+    comp_rmin = params.getfloat('Envelope','rmin_%s' % component)
+    rstar = params.getquantity('Star','r').cgs
     mask = (r.cgs > params.getquantity('Envelope','rout').cgs) | \
-            (r.cgs < rmin)
+            (r.cgs < rsub*comp_rmin) | (r.cgs<rstar)
     vr[mask] = 0.
     vth[mask] = 0.
     vphi[mask] = 0.
