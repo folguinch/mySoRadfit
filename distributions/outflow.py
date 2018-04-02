@@ -23,7 +23,7 @@ def get_mask(r, th, params):
 
     return mask
 
-def density(r, th, params, ignore_rim=False):
+def density(r, th, params, component='dust'):
     """Cavity density distribution.
 
     The distribution is assumed to be a power law, so constant density has a
@@ -33,6 +33,7 @@ def density(r, th, params, ignore_rim=False):
         r: spherical coordinate radial distance.
         th: polar angle.
         params: model parameters.
+        component (default=dust): component for the inner rim.
 
     Returns:
         density: the density distribution.
@@ -47,17 +48,15 @@ def density(r, th, params, ignore_rim=False):
     density = density * (r.cgs/r0)**(-1.*params.getfloat('Cavity','rho_exp'))
 
     # Limit values
-    rmin = params.getfloat('Cavity','rmin') *\
-            params.getquantity('Cavity','rsub').cgs
+    comp_rmin = params.getfloat('Cavity','rmin_%s' % component)
+    rsub = params.getquantity('Cavity','rsub').cgs
     rmax = params.getquantity('Cavity','rout').cgs
     density[r.cgs>rmax] = 0.
-    if not ignore_rim:
-        density[r.cgs<rmin] = 0.
-    else:
-    #    rmin = params.getfloat('Velocity','rmin') *\
-    #            params.getquantity('Disc','rsub').cgs
-        rmin = params.getquantity('Star','r').cgs
-        density[r.cgs<rmin] = 0.
+    density[r.cgs<rsub*comp_rmin] = 0.
+
+    # Check inside the star
+    rstar = params.getquantity('Star','r').cgs
+    density[r.cgs<rstar] = 0.
 
     # Mask
     mask = get_mask(r, th, params)
@@ -65,13 +64,14 @@ def density(r, th, params, ignore_rim=False):
 
     return density, mask
 
-def velocity(r, th, params, ignore_rim=False):
+def velocity(r, th, params, component='dust'):
     """Outflow velocity distribution.
 
     Parameters:
         r: spherical coordinate radial distance.
         th: polar angle.
         params: model parameters.
+        component (default=dust): component for the inner rim.
 
     Returns:
         vr, vth, vphi: the velocity for each spherical coordinate direction.
@@ -97,13 +97,13 @@ def velocity(r, th, params, ignore_rim=False):
         vr[mask] = 0.
 
         # Inside rim
-        if ignore_rim:
-            rmin = params.getquantity('Star','r').cgs
-            vr[r.cgs<rmin] = 0.
-        else:
-            rmin = params.getfloat('Velocity','rmin') *\
-                    params.getquantity('Cavity','rsub').cgs
-            vr[r.cgs<rmin] = 0.
+        comp_rmin = params.getfloat('Cavity','rmin_%s' % component)
+        rsub = params.getquantity('Cavity','rsub').cgs
+        vr[r.cgs<rsub*comp_rmin] = 0.
+
+        # Inside Star
+        rstar = params.getquantity('Star','r').cgs
+        vr[r.cgs<rstar] = 0.
 
         # Velocity cap
         try:
