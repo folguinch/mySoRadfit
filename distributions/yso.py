@@ -380,7 +380,7 @@ class YSO(object):
             if i==0:
                 abundance[temperature<T] = abn[i]
                 if len(Ts)==1:
-                    abundance[temperature>T] = abn[i+1]
+                    abundance[temperature>=T] = abn[i+1]
             elif i==len(Ts)-1:
                 ind = (temperature<T) & (temperature>=Ts[i-1])
                 abundance[ind] = abn[i]
