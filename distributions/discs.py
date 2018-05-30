@@ -26,7 +26,7 @@ def flared(r, th, params, component='dust'):
     rsub = params.getquantity('Disc','rsub').cgs
     #rmin = params.getfloat('Disc','rmin') *\
     #        params.getquantity('Disc','rsub').cgs
-    rmin = dust_inrim * rsub
+    rmin = dust_rmin * rsub
     rmax = params.getquantity('Disc','rmax').cgs
     beta = params.getfloat('Disc','beta')
     p = beta - params.getfloat('Disc','alpha')
