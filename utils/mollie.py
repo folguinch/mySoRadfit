@@ -1,4 +1,4 @@
-import os
+import os, time
 import struct
 from string import Template
 
@@ -7,11 +7,13 @@ from astropy.io import fits
 import astropy.units as u
 import astropy.constants as ct
 from hyperion.model import ModelOutput
-from scipy.interpolate import griddata
+from scipy.interpolate import griddata, interp2d
 from myutils.logger import get_logger
-from myutils.math import rebin_irregular_nd, map_sph_to_cart_axisym
+from myutils.math import rebin_irregular_nd, map_sph_to_cart_axisym, rebin_regular_nd
 from myutils.classes.data_3d import Data3D
 from Plotter.mesh_plotter import NMeshPlotter
+
+from ..distributions.temperature import get_temp_func
 
 def fill_inner_radius(r, th, temperature, density, yso):
     rstar = yso.params.getquantity('Star','r')
@@ -32,9 +34,13 @@ def fill_inner_radius(r, th, temperature, density, yso):
     return temperature, density
 
 def write_fits(dirname, **kwargs):
+    fitsnames = []
     for key, val in kwargs.items():
         hdu = fits.PrimaryHDU(val)
-        hdu.writeto(os.path.join(dirname, key+'.fits'), overwrite=True)
+        fitsnames += [os.path.join(dirname, key+'.fits')]
+        hdu.writeto(fitsnames[-1], overwrite=True)
+
+    return fitsnames
 
 def get_walls(*args):
     walls = []
@@ -47,7 +53,7 @@ def get_walls(*args):
     return walls
 
 def rebin_2Dsph_to_cart(val, new_pos, yso, pos=None, rebin=False, interp=False,
-        logger=get_logger(__name__), **kwargs):
+        min_height_to_disc=None, logger=get_logger(__name__), **kwargs):
     """Function for rebin or interpolate an input grid into a new grid.
 
     Parameters:
@@ -70,12 +76,25 @@ def rebin_2Dsph_to_cart(val, new_pos, yso, pos=None, rebin=False, interp=False,
         YI = R * np.sin(TH)
         ZI = R * np.cos(TH)
 
+        # Extend new positions until maximum radial distance
+        maxr = np.nanmax(np.sqrt(new_pos[1].value**2+new_pos[0].value**2))
+        delta = np.abs(new_pos[1][0].value-new_pos[1][1].value)
+        nymax = int(np.ceil(maxr/delta))
+        extra = np.nanmax(new_pos[1].value) + \
+                np.arange(1,abs(nymax-int(np.sum(new_pos[1]>0)))+1)*delta
+        new_pos0 = np.append(-1.*extra, new_pos[1].value)
+        new_pos0 = np.append(new_pos0, extra)
+        new_pos0 = np.sort(new_pos0) * new_pos[1].unit
+
         # Meshes
-        YN, ZN = np.meshgrid(new_pos[1], new_pos[2])
+        #YN, ZN = np.meshgrid(new_pos[1], new_pos[2])
+        YN, ZN = np.meshgrid(new_pos0, new_pos[2])
 
         # Evaluate the function
         if interp:
-            val1 = rebin_2Dsph_to_cart(val, (new_pos[0], np.array([0.])*new_pos[1].unit,
+            #val1 = rebin_2Dsph_to_cart(val, (new_pos[0], np.array([0.])*new_pos[1].unit,
+            #    new_pos[2]), yso, pos=pos, interp=True, logger=logger)
+            val1 = rebin_2Dsph_to_cart(val, (new_pos0, np.array([0.])*new_pos[1].unit,
                 new_pos[2]), yso, pos=pos, interp=True, logger=logger)
             val1 = val1[:,0,:]
         else:
@@ -84,7 +103,8 @@ def rebin_2Dsph_to_cart(val, new_pos, yso, pos=None, rebin=False, interp=False,
             val1 = val1.cgs.value
 
         # Walls
-        walls = get_walls(new_pos[1], new_pos[-1])
+        #walls = get_walls(new_pos[1], new_pos[-1])
+        walls = get_walls(new_pos0, new_pos[-1])
         walls = [wall.to(pos[0].unit).value for wall in walls]
 
         # Rebin 2-D
@@ -115,13 +135,184 @@ def rebin_2Dsph_to_cart(val, new_pos, yso, pos=None, rebin=False, interp=False,
         ZN, YN, XN = np.meshgrid(*new_pos[::-1], indexing='ij')
 
         # Evaluate the function
-        val1 = yso(XN, YN, ZN)
+        val1 = yso(XN, YN, ZN, ignore_rim=True,
+                min_height_to_disc=min_height_to_disc)
         assert val1.cgs.unit == u.g/u.cm**3
         val1 = val1.cgs.value
 
         return val1
 
-def set_physical_props(yso, grids, template, logger=get_logger(__name__)):
+def get_quadrant_ind(x, y, z):
+    ind = [(x<=0) & (y<=0) & (z<=0)]
+    ind += [(x<=0) & (y<=0) & (z>0)]
+    ind += [(x<=0) & (y>0) & (z<=0)]
+    ind += [(x<=0) & (y>0) & (z>0)]
+    ind += [(x>0) & (y<=0) & (z<=0)]
+    ind += [(x>0) & (y<=0) & (z>0)]
+    ind += [(x>0) & (y>0) & (z<=0)]
+    ind += [(x>0) & (y>0) & (z>0)]
+
+    return ind
+
+def get_bins_quadrant(bins):
+    """
+    Bins assumed sorted and odd length (even number of cells).
+    """
+    xmid = (len(bins[0]) - 1)/2
+    ymid = (len(bins[1]) - 1)/2
+    zmid = (len(bins[2]) - 1)/2
+
+    newbins = [[bins[0][:xmid+1], bins[1][:ymid+1], bins[2][:zmid+1]]]
+    newbins += [[bins[0][:xmid+1], bins[1][:ymid+1], bins[2][zmid:]]]
+    newbins += [[bins[0][:xmid+1], bins[1][ymid:], bins[2][:zmid+1]]]
+    newbins += [[bins[0][:xmid+1], bins[1][ymid:], bins[2][zmid:]]]
+    newbins += [[bins[0][xmid:], bins[1][:ymid+1], bins[2][:zmid+1]]]
+    newbins += [[bins[0][xmid:], bins[1][:ymid+1], bins[2][zmid:]]]
+    newbins += [[bins[0][xmid:], bins[1][ymid:], bins[2][:zmid+1]]]
+    newbins += [[bins[0][xmid:], bins[1][ymid:], bins[2][zmid:]]]
+
+    return newbins
+
+def eval_by_quadrant(x, y, z, func, nret=1, **kwargs):
+    def replace(val, aux, ind):
+        for i in range(nret):
+            try:
+                val[i][ind] = aux[i]
+            except IndexError:
+                val[i][ind] = aux
+        return val
+    val = [np.zeros(x.shape) for i in range(nret)]
+
+    inds = get_quadrant_ind(x, y, z)
+    for ind in inds:
+        aux = func(x[ind], y[ind], z[ind], **kwargs)
+        val = replace(val, aux, ind)
+    
+    for i in range(nret):
+        try:
+            val[i] = val[i] * aux[i].unit
+        except IndexError:
+            val[i] = val[i] * aux.unit
+
+    return val
+
+def rebin_by_quadrant(val, x, y, z, bins):
+    inds1 = get_quadrant_ind(x, y, z)
+    bins_quadrants = get_bins_quadrant(bins)
+    ZN, YN, XN = np.meshgrid(z, y, x, indexing='ij')
+    inds3 = get_quadrant_ind(XN, YN, ZN)
+    newx = (bins[0][1:] + bins[0][:-1])/2.
+    newy = (bins[1][1:] + bins[1][:-1])/2.
+    newz = (bins[2][1:] + bins[2][:-1])/2.
+    ZN, YN, XN = np.meshgrid(newz, newy, newx, indexing='ij')
+    newval = np.zeros(XN.shape)
+    inds2 = get_quadrant_ind(XN, YN, ZN)
+    for ind1, ind2, ind3, qbins in zip(inds1, inds2, inds3, bins_quadrants):
+        print newval[ind2].shape
+        newvali[ind2] = rebin_regular_nd(val[ind3], z[ind1], y[ind1], x[ind1], 
+                bins=qbins[::-1], statistic='sum')
+        print newvali.shape
+        newval[ind1] = newvali
+    return newval
+
+def rebin_by_chunks(val, x, y, z, bins, chunks=1):
+    return 0
+
+def phys_oversampled_cart(x, y, z, yso, temp_func, oversample=5, 
+        logger=get_logger(__name__)):
+    """Calculate the density and velocity distributions by oversampling the
+    grid.
+
+    This function first creates a new oversampled grid and then rebin this grid
+    to the input one by taking weighted averages of the physical quantities.
+
+    Parameters:
+        yso (YSO object): the object containing the model parameters.
+        xlim (tuple): lower and upper limits of the x-axis.
+        ylim (tuple): lower and upper limits of the y-axis.
+        zlim (tuple): lower and upper limits of the z-axis.
+        cellsize (float): physical size of the cell in the coarse grid.
+        oversample (int, default=5): oversampling factor.
+        logger (logging): logger manager.
+    """
+    # Hydrogen mass
+    mH = ct.m_p + ct.m_e
+
+    # Special case
+    if oversample==1:
+        logger.info('Evaluating the grid')
+        ZN, YN, XN = np.meshgrid(z, y, x, indexing='ij')
+        n, vx, vy, vz, temp = yso.get_all(XN, YN, ZN,
+                temperature=temp_func, component='gas')
+        n = n / (2.33 * mH)
+        temp[temp<2.7*u.K] = 2.7*u.K
+        assert n.cgs.unit == 1/u.cm**3
+        assert temp.unit == u.K
+        assert vx.cgs.unit == u.cm/u.s
+        assert vy.cgs.unit == u.cm/u.s
+        assert vz.cgs.unit == u.cm/u.s
+        return n, (vx, vy, vz), temp
+
+    logger.info('Resampling grid')
+    # Create new grid
+    dx = np.abs(x[0]-x[1])
+    dy = np.abs(y[0]-y[1])
+    dz = np.abs(z[0]-z[1])
+    xw,xstep = np.linspace(np.min(x)-dx/2., np.max(x)+dx/2., num=len(x)*oversample+1,
+            endpoint=True, retstep=True)
+    xover = (xw[:-1] + xw[1:]) / 2.
+    logger.info('Resampled grid x-step = %s', xstep.to(u.au))
+    yw,ystep = np.linspace(np.min(y)-dy/2., np.max(y)+dy/2., num=len(y)*oversample+1,
+            endpoint=True, retstep=True)
+    yover = (yw[:-1] + yw[1:]) / 2.
+    logger.info('Resampled grid y-step = %s', ystep.to(u.au))
+    zw,zstep = np.linspace(np.min(z)-dz/2., np.max(z)+dz/2., num=len(z)*oversample+1,
+            endpoint=True, retstep=True)
+    zover = (zw[:-1] + zw[1:]) / 2.
+    logger.info('Resampled grid z-step = %s', zstep.to(u.au))
+    ZN, YN, XN = np.meshgrid(zover, yover, xover, indexing='ij')
+
+    # Volumes
+    vol = dx*dy*dz
+    vol_over = xstep*ystep*zstep
+
+    # Number density
+    bins = get_walls(z, y, x)
+    n_over, vx_over, vy_over, vz_over, temp = yso.get_all(XN, YN, ZN,
+            temperature=temp_func, component='gas', nquad=oversample)
+    n_over = n_over / (2.33 * mH)
+    assert n_over.cgs.unit == 1/u.cm**3
+    N = vol_over * rebin_regular_nd(n_over.cgs.value, zover, yover, xover, bins=bins,
+            statistic='sum') * n_over.cgs.unit
+    dens = N / vol
+    assert dens.cgs.unit == 1/u.cm**3
+
+    # Temperature
+    temp = rebin_regular_nd(temp.value*n_over.cgs.value, zover, yover, 
+            xover, bins=bins, statistic='sum') * \
+                    temp.unit * n_over.cgs.unit
+    temp = vol_over * temp / N
+    temp[temp<2.7*u.K] = 2.7*u.K
+    assert temp.unit == u.K
+
+    # Velocity
+    assert vx_over.cgs.unit == u.cm/u.s
+    assert vy_over.cgs.unit == u.cm/u.s
+    assert vz_over.cgs.unit == u.cm/u.s
+    v = []
+    for vi in (vx_over, vy_over, vz_over):
+        vsum = rebin_regular_nd(vi.cgs.value*n_over.cgs.value, zover, yover, 
+                xover, bins=bins, statistic='sum') * \
+                        vi.cgs.unit * n_over.cgs.unit
+        vsum = vol_over * vsum / N
+        vsum[np.isnan(vsum)] = 0.
+        assert vsum.cgs.unit == u.cm/u.s
+        v += [vsum]
+
+    return dens, v, temp
+
+def set_physical_props(yso, grids, cell_sizes, save_dir, oversample=3,
+        logger=get_logger(__name__)):
     """Calculate and write the physical properties of the model.
 
     Parameters:
@@ -130,33 +321,25 @@ def set_physical_props(yso, grids, template, logger=get_logger(__name__)):
         template: filename of the *define_model.c* file.
         logger: logging system.
     """
-    # Load quantities
+    # Load temperature function
     if yso.params.get('DEFAULT', 'quantities_from'):
         hmodel = yso.params.get('DEFAULT', 'quantities_from')
         logger.info('Loading Hyperion model: %s', os.path.basename(hmodel))
         hmodel = ModelOutput(os.path.expanduser(hmodel))
         q = hmodel.get_quantities()
-        density = np.sum(q['density'].array, axis=0)
         temperature = np.sum(q['temperature'].array[1:], axis=0)
         r, th = q.r*u.cm, q.t*u.rad
-        rw, tw = q.r_wall*u.cm, q.t_wall*u.rad
-
-        # Volumes
-        dr = np.abs(rw[1:] - rw[:-1])
-        dt = np.abs(tw[1:] - tw[:-1])
-        R, TH = np.meshgrid(r, th)
-        DR, DTH = np.meshgrid(dr, dt)
-        vol_sph = R**2 * np.sin(TH) * DR * DTH
-        temperature[0,:,:], density[0,:,:] = fill_inner_radius(R, TH,
-                temperature[0,:,:], density[0,:,:], yso)
+        temp_func = get_temp_func(yso.params, temperature, r, th)
     else:
         raise NotImplementedError
 
     # Open template
-    #with open(os.path.expanduser(template)) as ftemp:
-    #    templ = Template(ftemp.read())
-
-    for i, grid in enumerate(grids):
+    fitslist = []
+    # Start from smaller to larger grid
+    for i,grid,cellsz in zip(range(len(grids))[::-1], grids, cell_sizes):
+        print '='*80
+        logger.info('Working on grid: %i', i)
+        logger.info('Grid cell size: %i', cellsz)
         x = grid[0]['x'] * grid[1]['x']
         y = grid[0]['y'] * grid[1]['y']
         z = grid[0]['z'] * grid[1]['z']
@@ -164,30 +347,89 @@ def set_physical_props(yso, grids, template, logger=get_logger(__name__)):
         yi = np.unique(y)
         zi = np.unique(z)
 
-        # Density
-        dens = rebin_2Dsph_to_cart(density, (xi, yi, zi), yso, pos=(r, th), 
-                rebin=i==2, interp=True, weights=vol_sph, logger=logger)
-        dens = dens * u.g/u.cm**3
-        mH = ct.m_p + ct.m_e
-        # Number density
-        dens = dens / (2.33 * mH)
+        # Density and velocity
+        dens, (vx, vy, vz), temp = phys_oversampled_cart(xi, yi, zi, yso,
+                temp_func, oversample=oversample if i!=2 else 5, logger=logger)
         dens[dens.cgs<=0./u.cm**3] = 10./u.cm**3
+        temp[np.isnan(temp.value)] = 2.7 * u.K
+
+        # Replace the inner region by rebbining the previous grid
+        if i<len(grids)-1:
+            # Walls of central cells
+            j = cell_sizes.index(cellsz)
+            xlen = cell_sizes[j-1] * len(xprev) * u.au
+            nxmid = int(xlen.value) / cellsz
+            xw = np.linspace(-0.5*xlen.value, 0.5*xlen.value, nxmid+1) * u.au
+            ylen = cell_sizes[j-1] * len(yprev) * u.au
+            nymid = int(ylen.value) / cellsz
+            yw = np.linspace(-0.5*ylen.value, 0.5*ylen.value, nymid+1) * u.au
+            zlen = cell_sizes[j-1] * len(zprev) * u.au
+            nzmid = int(zlen.value) / cellsz
+            zw = np.linspace(-0.5*zlen.value, 0.5*zlen.value, nzmid+1) * u.au
+            if nxmid==nymid==nzmid==0:
+                logger.warning('The inner grid is smaller than current grid size')
+            else:
+                logger.info('The inner %ix%ix%i cells will be replaced', nxmid,
+                        nymid, nzmid)
+
+                # Rebin previous grid
+                # Density
+                vol_prev = (cell_sizes[j-1]*u.au)**3
+                vol = (cellsz * u.au)**3
+                N_cen = vol_prev.cgs * rebin_regular_nd(dens_prev.cgs.value, 
+                        zprev.cgs.value, yprev.cgs.value, xprev.cgs.value, 
+                        bins=(zw.cgs.value,yw.cgs.value,xw.cgs.value), 
+                        statistic='sum') * dens_prev.cgs.unit
+                dens_cen = N_cen / vol
+                dens_cen = dens_cen.to(dens.unit)
+                # Temperature
+                T_cen = rebin_regular_nd(temp_prev.value * dens_prev.cgs.value,
+                        zprev.cgs.value, yprev.cgs.value, xprev.cgs.value, 
+                        bins=(zw.cgs.value,yw.cgs.value, xw.cgs.value), 
+                        statistic='sum') * temp_prev.unit * dens_prev.cgs.unit
+                T_cen = vol_prev.cgs * T_cen / N_cen.cgs
+                T_cen = T_cen.to(temp.unit)
+
+                # Replace
+                dens[len(zi)/2-nzmid/2:len(zi)/2+nzmid/2,
+                        len(yi)/2-nymid/2:len(yi)/2+nymid/2,
+                        len(xi)/2-nxmid/2:len(xi)/2+nxmid/2] = dens_cen
+                temp[len(zi)/2-nzmid/2:len(zi)/2+nzmid/2,
+                        len(yi)/2-nymid/2:len(yi)/2+nymid/2,
+                        len(xi)/2-nxmid/2:len(xi)/2+nxmid/2] = T_cen
+                #vx[len(zi)/2-nzmid/2:len(zi)/2+nzmid/2,
+                #        len(yi)/2-nymid/2:len(yi)/2+nymid/2,
+                #        len(xi)/2-nxmid/2:len(xi)/2+nxmid/2] = 0.
+                #vy[len(zi)/2-nzmid/2:len(zi)/2+nzmid/2,
+                #        len(yi)/2-nymid/2:len(yi)/2+nymid/2,
+                #        len(xi)/2-nxmid/2:len(xi)/2+nxmid/2] = 0.
+                #vz[len(zi)/2-nzmid/2:len(zi)/2+nzmid/2,
+                #        len(yi)/2-nymid/2:len(yi)/2+nymid/2,
+                #        len(xi)/2-nxmid/2:len(xi)/2+nxmid/2] = 0.
+        #    dens[len(zi)/2-nzmid/2:len(zi)/2+nzmid/2,
+        #            len(yi)/2-nymid/2:len(yi)/2+nymid/2,
+        #            len(xi)/2-nxmid/2:len(xi)/2+nxmid/2] = 1E8*dens.unit
+        #    temp[len(zi)/2-nzmid/2:len(zi)/2+nzmid/2,
+        #            len(yi)/2-nymid/2:len(yi)/2+nymid/2,
+        #            len(xi)/2-nxmid/2:len(xi)/2+nxmid/2] = 500*temp.unit
+        dens_prev = dens
+        temp_prev = temp
+        xprev = xi
+        yprev = yi
+        zprev = zi
+
+        #if mass_prev:
+        #    ZN, YN, XN = np.meshgrid(zi, yi, xi, indexing='ij')
+        #    ind = (np.abs(XN)<=) & (np.abs(YN)<=) & (np.abs(ZN)<=)
+        #    dens[ind] = dens[ind]/
+        #    mass_prev = mass
 
         # Temperature
-        temp = rebin_2Dsph_to_cart(temperature, (xi, yi, zi), yso, pos=(r, th), 
-                rebin=i==2, interp=True, weights=density[0,:,:], logger=logger)
-        temp = temp*u.K
-        temp[temp<2.7*u.K] = 2.7*u.K
-
-        # Velocity
-        if i==2:
-            dz = np.abs(zi[0]-zi[1])
-        else:
-            dz = None
-        vx, vy, vz = yso.velocity(x, y, z, min_height_to_disc=dz)
-        vx = np.reshape(vx, dens.shape, order='F')
-        vy = np.reshape(vy, dens.shape, order='F')
-        vz = np.reshape(vz, dens.shape, order='F')
+        #rebin = i==2 and rebin_small
+        #temp = rebin_2Dsph_to_cart(temperature, (xi, yi, zi), yso, pos=(r, th), 
+        #        rebin=rebin, interp=True, weights=density[0,:,:], logger=logger)
+        #temp = temp*u.K
+        #temp[temp<2.7*u.K] = 2.7*u.K
 
         # Abundance
         abundance = yso.abundance(temp)
@@ -195,38 +437,19 @@ def set_physical_props(yso, grids, template, logger=get_logger(__name__)):
         # Linewidth
         amu = 1.660531e-24 * u.g
         atoms = yso.params.getfloat('Velocity', 'atoms')
-        c_s = ct.k_B * temp / (atoms * amu)
+        c_s2 = ct.k_B * temp / (atoms * amu)
         linewidth = np.sqrt(yso.params.getquantity('Velocity', 'linewidth')**2
-                + c_s)
+                + c_s2)
 
         # Write FITS
-        write_fits(os.path.dirname(os.path.expanduser(template)), 
+        fitsnames = write_fits(os.path.expanduser(save_dir), 
                 **{'temp%i'%i: temp.value, 'dens%i'%i: dens.cgs.value, 
                 'vx%i'%i: vx.cgs.value, 'vy%i'%i: vy.cgs.value, 'vz%i'%i:
                 vz.cgs.value, 'abn%i'%i: abundance,
                 'lwidth%i'%i: linewidth.cgs.value})
+        fitslist += fitsnames
 
-        # Write template
-        #sci_fmt = lambda x: '%.8e' % x
-        #flt_fmt = lambda x: '%.8f' % x
-        #dens = ','.join(map(sci_fmt, np.ravel(dens.cgs.value,order='F')))
-        #temp = ','.join(map(flt_fmt, np.ravel(temp.value,order='F')))
-        #vx = ','.join(map(flt_fmt, np.ravel(vx.cgs.value,order='F')))
-        #vy = ','.join(map(flt_fmt, np.ravel(vy.cgs.value,order='F')))
-        #vz = ','.join(map(flt_fmt, np.ravel(vz.cgs.value,order='F')))
-        #abundance = ','.join(map(sci_fmt, np.ravel(abundance,order='F')))
-        #linewidth = ','.join(map(flt_fmt, np.ravel(linewidth.cgs.value,order='F')))
-        #templ = templ.safe_substitute(**{'temp%i'%i: temp, 'dens%i'%i: dens, 
-        #    'vx%i'%i: vx, 'vy%i'%i: vy, 'vz%i'%i: vz, 'abn%i'%i: abundance,
-        #    'linewidth%i'%i: linewidth})
-        #if i!=len(grids)-1:
-        #    templ = Template(templ)
-
-    ## Save file
-    #dirname = os.path.dirname(os.path.expanduser(template))
-    #fname = 'define_model.c'
-    #with open(os.path.join(dirname,fname),'w') as out:
-    #    out.write(templ)
+    return fitslist
 
 def write_setup(section, model, template, rt='mollie'):
     # Open template
@@ -256,8 +479,15 @@ def write_setup(section, model, template, rt='mollie'):
     # Write file
     dirname = os.path.dirname(os.path.expanduser(template))
     fname = 'setup.c'
-    with open(os.path.join(dirname, fname), 'w') as out:
-        out.write(temp.substitute(**kwd))
+    while True:
+        try:
+            with open(os.path.join(dirname, fname), 'w') as out:
+                out.write(temp.substitute(**kwd))
+            break
+        except IOError:
+            print 'Re-trying saving setup.c'
+            time.sleep(2)
+            continue
 
 def load_model(model, source, filename, logger, old=False, older=False, 
                write='combined_jy', velocity=True, pa=None):
@@ -416,8 +646,8 @@ def load_model(model, source, filename, logger, old=False, older=False,
             pa = source.get_quantity('pa')
         header_template['CROTA2'] = (360*u.deg - pa.to(u.deg)).value
 
-    header_template['BMAJ'] = np.degrees((beamx.si / distance.si).value * 2.35)
-    header_template['BMIN'] = np.degrees((beamx.si / distance.si).value * 2.35)
+    #header_template['BMAJ'] = np.degrees((beamx.si / distance.si).value * 2.35)
+    #header_template['BMIN'] = np.degrees((beamx.si / distance.si).value * 2.35)
 
     header_template['EQUINOX'] = 2000.
 
@@ -460,27 +690,27 @@ def load_model(model, source, filename, logger, old=False, older=False,
 
             ### Write cube in Jy/pixel ###
 
-            K_to_Jy_per_beam = (header['RESTFREQ'] / 1e9) ** 2 * \
-                    header['BMAJ']* header['BMIN'] * 3600 ** 2 / 1.224e6
+            #K_to_Jy_per_beam = (header['RESTFREQ'] / 1e9) ** 2 * \
+            #        header['BMAJ']* header['BMIN'] * 3600 ** 2 / 1.224e6
 
-            header_Jy_per_beam = header.copy()
-            header_Jy_per_beam['BUNIT'] = 'Jy/beam'
-            if write == 'indiv_jy_beam':
-                fits.writeto(filename, 
-                             data[l,v,:,:,:].transpose() * K_to_Jy_per_beam, 
-                             header, clobber=True)
+            #header_Jy_per_beam = header.copy()
+            #header_Jy_per_beam['BUNIT'] = 'Jy/beam'
+            #if write == 'indiv_jy_beam':
+            #    fits.writeto(filename, 
+            #                 data[l,v,:,:,:].transpose() * K_to_Jy_per_beam, 
+            #                 header, clobber=True)
 
             # Avoid referring to beam since for some cases beam = 0
             pixel_area_deg = np.abs(header['CDELT1']) * header['CDELT2']
-            beam_area_deg = 1.1331 * header['BMAJ'] * header['BMIN']
-            pixels_per_beam = beam_area_deg / pixel_area_deg
-            K_to_Jy_old = K_to_Jy_per_beam / pixels_per_beam
+            #beam_area_deg = 1.1331 * header['BMAJ'] * header['BMIN']
+            #pixels_per_beam = beam_area_deg / pixel_area_deg
+            #K_to_Jy_old = K_to_Jy_per_beam / pixels_per_beam
             K_to_Jy = (header['RESTFREQ']*u.Hz).to(u.GHz).value** 2 * 3600 ** 2 / 1.224e6 /\
                     1.1331 * pixel_area_deg
 
-            logger.info("K to Jy/beam = %.3e", K_to_Jy_per_beam)
+            #logger.info("K to Jy/beam = %.3e", K_to_Jy_per_beam)
             logger.info("K to Jy/pixel = %.3f", K_to_Jy)
-            logger.info("K to Jy/pixel [old]= %.3f", K_to_Jy_old)
+            #logger.info("K to Jy/pixel [old]= %.3f", K_to_Jy_old)
 
             header_Jy = header.copy()
             header_Jy['BUNIT'] = 'Jy'
@@ -577,21 +807,21 @@ def load_model(model, source, filename, logger, old=False, older=False,
             fits.writeto(filename, data2[v,:nchan[0]].transpose(), 
                          header, clobber=True)
 
-        K_to_Jy_per_beam = (header['RESTFREQ']*u.Hz).to(u.GHz).value** 2 * header['BMAJ'] *\
-                header['BMIN'] * 3600 ** 2 / 1.224e6
+        #K_to_Jy_per_beam = (header['RESTFREQ']*u.Hz).to(u.GHz).value** 2 * header['BMAJ'] *\
+        #        header['BMIN'] * 3600 ** 2 / 1.224e6
 
-        header_Jy_per_beam = header.copy()
-        header_Jy_per_beam['BUNIT'] = 'Jy/beam'
-        if write == 'combined_jy_beam':
-            fits.writeto(filename,
-                         data2[v,:nchan[0]].transpose() * K_to_Jy_per_beam, 
-                         header, clobber=True)
+        #header_Jy_per_beam = header.copy()
+        #header_Jy_per_beam['BUNIT'] = 'Jy/beam'
+        #if write == 'combined_jy_beam':
+        #    fits.writeto(filename,
+        #                 data2[v,:nchan[0]].transpose() * K_to_Jy_per_beam, 
+        #                 header, clobber=True)
 
         # Avoid referring to beam since for some cases beam = 0
         pixel_area_deg = np.abs(header['CDELT1']) * header['CDELT2']
-        beam_area_deg = 1.1331 * header['BMAJ'] * header['BMIN']
-        pixels_per_beam = beam_area_deg / pixel_area_deg
-        K_to_Jy_old = K_to_Jy_per_beam / pixels_per_beam
+        #beam_area_deg = 1.1331 * header['BMAJ'] * header['BMIN']
+        #pixels_per_beam = beam_area_deg / pixel_area_deg
+        #K_to_Jy_old = K_to_Jy_per_beam / pixels_per_beam
         K_to_Jy = (header['RESTFREQ']*u.Hz).to(u.GHz).value**2 * 3600**2 / 1.224e6 / \
                 1.1331 * pixel_area_deg
 
