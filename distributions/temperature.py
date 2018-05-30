@@ -2,7 +2,7 @@ import numpy as np
 import astropy.units as u
 from myutils.math import map_sph_to_cart_axisym
 
-def get_temp_func(params, temp, r, th, phi=None, extrapolate=True, **kwargs):
+def get_temp_func(params, temperature, r, th, phi=None, extrapolate=True, **kwargs):
     """Get a temperature function from a grid.
 
     The returned function gives the temperature at the new grid points. Only
@@ -10,7 +10,7 @@ def get_temp_func(params, temp, r, th, phi=None, extrapolate=True, **kwargs):
 
     Parameters:
         params (configparser): model parameters.
-        temp (np.array): original temperature array.
+        temperature (np.array): original temperature array.
         r, th (np.array): coordinates of the original cells.
         phi (np.array, optional): azimuthal spherical coordinates 
             (not implemented)
@@ -33,7 +33,7 @@ def get_temp_func(params, temp, r, th, phi=None, extrapolate=True, **kwargs):
         
         # Fill outside grid
         rstar = params.getquantity('Star','r')
-        rmin = params.getfloat('Disc','rmin') *\
+        rmin = params.getfloat('Disc','rmin_dust') *\
                params.getquantity('Disc','rsub')
         rout = params.getquantity('Envelope','rout')
         tstar = params.getquantity('Star','t')
