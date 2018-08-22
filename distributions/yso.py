@@ -58,7 +58,7 @@ class YSO(object):
             loc (iterable): location of the source.
         """
         assert len(loc)==3
-        self.params = self.load_config(params)
+        self.__params = self.load_config(params)
         self.loc = loc
 
     def __call__(self, x, y, z, component='dust'):
@@ -70,6 +70,18 @@ class YSO(object):
         disc, envelope, cavity = self.density(x, y, z, component=component)
 
         return disc + envelope + cavity
+
+    @property
+    def param(self):
+        return self.__params
+
+    @property
+    def param_list(self):
+        """Compile a list of all the parameters in the YSO"""
+        params = []
+        for section in self.params.sections():
+            params += params[section].options()
+        return params
 
     @staticmethod
     def load_config(filename):
@@ -87,6 +99,30 @@ class YSO(object):
         parser.read(name)
 
         return parser
+
+    def update(self, section, param, value):
+        """Change the value for a given parameter
+        
+        If the density in the envelope is ulrich and the stellar mass is
+        updated, then the infall rate is updated to keep the density
+        distribution unchanged. Note that if the stellar mass parameter in the
+        envelope is updated only the stellar mass is changed, i.e. the envelope
+        infall rate do not change."""
+        assert section in self.params.sections()
+        assert param in self.params.options(section)
+
+        if section.lower()=='envelope' and param.lower()=='m_star':
+            self.__params['Star'][param] = value
+            self.__params[section][param] = value
+        elif section.lower()=='star' and param.lower()=='m':
+            mstar = self.params.getquantity('Star', 'm')
+            mdotold = self.params.getquantity(section, 'mdot')
+            mdotnew = np.sqrt(value/mstar) * mdot
+            self.__params['Star'][param] = value
+            self.__params['Envelope']['m_star'] = value
+            self.__params['Envelope']['mdot'] = mdotnew.to(mdotnew.unit)
+        else:
+            self.__params[section][param] = value
 
     def from_fits(self, quantity, section='DEFAULT'):
         """Load a quantity from a FITS file.
