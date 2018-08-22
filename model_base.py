@@ -78,7 +78,11 @@ class BaseModel(object):
 
     @abstractmethod
     def load_params(self):
-        return True
+        """Load parameter file for each model source."""
+        for section in self.config.sections():
+            self.logger.info('Loading parameters for: %s', section)
+            self.params[section] = YSO(self.config[section]['params'],
+                    loc=self.config.getfloatlist(section, 'loc'))
 
     @property
     def name(self):

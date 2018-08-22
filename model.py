@@ -19,11 +19,7 @@ class Model(BaseModel):
         raise NotImplementedError
 
     def load_params(self):
-        """Load parameter file for each model source."""
-        for section in self.config.sections():
-            self.logger.info('Loading parameters for: %s', section)
-            self.params[section] = YSO(self.config[section]['params'],
-                    loc=self.config.getfloatlist(section, 'loc'))
+        super(Model, self).load_params()
 
     def build_grid(self, criterion, max_depth=10):
         """Build the grid.
