@@ -8,6 +8,7 @@ from astropy.io import fits
 from myutils.myconfigparser import myConfigParser
 from myutils.coordinates import cart_to_sph, vel_sph_to_cart
 
+from .distribution import Distribution
 import ulrich, outflow, discs
 
 def hyperion_yso_density(x, y, z, params, loc=(0.,0.,0.)):
@@ -38,7 +39,7 @@ def hyperion_yso_density(x, y, z, params, loc=(0.,0.,0.)):
 
     return disc + envelope + cavity
     
-class YSO(object):
+class YSO(Distribution):
     """Create a YSO object for the model.
 
     The YSO object manages the pgysical properties of the yso. When the YSO
@@ -46,7 +47,7 @@ class YSO(object):
     returned.
 
     Attributes:
-        params (myConfigParser): physical properties of the YSO.
+        __params (myConfigParser): physical properties of the YSO.
         loc (iterable): location of the source in the grid.
     """
 
@@ -58,8 +59,13 @@ class YSO(object):
             loc (iterable): location of the source.
         """
         assert len(loc)==3
-        self.__params = self.load_config(params)
-        self.loc = loc
+        super(YSO, self).__init__(params)
+
+        # For backwards compatibilty:
+        if 'Geometry' in self.__params.sections():
+            self.loc = self.__params.getintlist('Geometry', 'loc')
+        else:
+            self.loc = loc
 
     def __call__(self, x, y, z, component='dust'):
         """Density distribution.
@@ -71,56 +77,57 @@ class YSO(object):
 
         return disc + envelope + cavity
 
-    @property
-    def param(self):
-        return self.__params
-
-    @property
-    def param_list(self):
-        """Compile a list of all the parameters in the YSO"""
-        params = []
-        for section in self.params.sections():
-            params += params[section].options()
-        return params
-
-    @staticmethod
-    def load_config(filename):
-        """Load the parameter configuration file.
-
-        Parameters:
-            filename (str): YSO configuration file name.
-        """
-        # Verify file
-        name = os.path.realpath(os.path.expanduser(filename))
-        assert os.path.isfile(name)
-
-        # Load file
-        parser = myConfigParser(interpolation=ExtendedInterpolation())
-        parser.read(name)
-
-        return parser
-
-    def update(self, section, param, value):
+    def update(self, section, param, value, tie_rc=True):
         """Change the value for a given parameter
         
         If the density in the envelope is ulrich and the stellar mass is
         updated, then the infall rate is updated to keep the density
         distribution unchanged. Note that if the stellar mass parameter in the
         envelope is updated only the stellar mass is changed, i.e. the envelope
-        infall rate do not change."""
-        assert section in self.params.sections()
-        assert param in self.params.options(section)
+        infall rate do not change.
+
+        If input value do not have units, the units of the current parameter
+        are assigned.
+
+        Parameters:
+            section (str): density structure name
+            param (str): name of the parameter
+            value (float or astropy.quantity): new value
+            tie_rc (boolean, optional): it ties the value of the centrifugal
+                radius with the disc value (only if envelope is ulrich)
+        """
+        self.__validate_keys(section, param)
+
+        # Check unit compatibility of new value
+        old = self[section, param]
+        if not hasattr(value, 'unit') and hasattr(old, 'unit'):
+            value = value * old.unit
+        elif hasattr(value, 'unit') and hasattr(old, 'unit'):
+            value = value.to(old.unit)
+        elif hasattr(value, 'unit') and not hasattr(old, 'unit'):
+            raise ValueError('The parameter *%s* in %s does not have unit' % \
+                    (param, section))
+        else:
+            pass
 
         if section.lower()=='envelope' and param.lower()=='m_star':
+            assert hasattr(value, 'unit')
             self.__params['Star'][param] = value
             self.__params[section][param] = value
         elif section.lower()=='star' and param.lower()=='m':
+            assert hasattr(value, 'unit')
             mstar = self.params.getquantity('Star', 'm')
             mdotold = self.params.getquantity(section, 'mdot')
             mdotnew = np.sqrt(value/mstar) * mdot
             self.__params['Star'][param] = value
             self.__params['Envelope']['m_star'] = value
             self.__params['Envelope']['mdot'] = mdotnew.to(mdotnew.unit)
+        elif (section.lower()=='envelope' or section.lower()=='disc') and \
+                self.__params['Envelope']['type']=='ulrich' and \
+                (param.lower()=='r' or param.lower()=='rc') and tie_rc:
+            assert hasattr(value, 'unit')
+            self.__params['Envelope']['rc'] = value
+            self.__params['Disc']['r'] = value
         else:
             self.__params[section][param] = value
 
