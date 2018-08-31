@@ -147,4 +147,26 @@ class BaseModel(object):
         self.logger.info('Loading image setup')
         self.images = self._load_parser(filename)
 
+    def load_grids(self, rt):
+        """Load the grids from file.
+        
+        Parameters:
+            rt: RT transfer config section.
+        """
+        grids = []
+        for grid in self.setup.getlist(rt, 'grids'):
+            self.logger.info('Loading grid: %s', os.path.basename(grid))
+            fname = os.path.realpath(os.path.expanduser(grid))
+            grid = load_struct_array(fname, usecols=None)
+            grids += [grid]
+
+        cell_sizes = self.setup.getintlist(rt, 'cell_sizes')
+
+        # Sort grid sizes
+        self.logger.info('Sorting grids by cell size (a->Z)')
+        ind = np.argsort(cell_sizes)
+        grids = map(lambda x: grids[x], ind)
+        cell_sizes = map(lambda x: cell_sizes[x], ind)
+
+        return grids, cell_sizes
 
