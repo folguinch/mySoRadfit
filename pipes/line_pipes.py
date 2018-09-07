@@ -1,4 +1,4 @@
-from myutils.decorrators import register_function
+from myutils.decorators import register_function
 
 def mollie_base_pipe(config, model_file, PA=0.):
     # Load & save FITS file

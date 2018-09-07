@@ -11,6 +11,7 @@ from scipy.interpolate import griddata, interp2d
 from myutils.logger import get_logger
 from myutils.math import rebin_irregular_nd, map_sph_to_cart_axisym, rebin_regular_nd
 from myutils.classes.data_3d import Data3D
+from myutils.decorators import timed
 from Plotter.mesh_plotter import NMeshPlotter
 
 from ..distributions.temperature import get_temp_func
@@ -218,6 +219,7 @@ def rebin_by_quadrant(val, x, y, z, bins):
 def rebin_by_chunks(val, x, y, z, bins, chunks=1):
     return 0
 
+@timed
 def phys_oversampled_cart(x, y, z, yso, temp_func, oversample=5, 
         logger=get_logger(__name__)):
     """Calculate the density and velocity distributions by oversampling the
@@ -311,8 +313,167 @@ def phys_oversampled_cart(x, y, z, yso, temp_func, oversample=5,
 
     return dens, v, temp
 
+def get_physical_props(yso_dict, grids, cell_sizes, save_dir, oversample=[3],
+        dust_out=None, logger=get_logger(__name__)):
+    """Calculate and write the physical properties of the model.
+
+    Parameters:
+        yso: the model parameters.
+        grids: grids where the model will be evaluated
+        template: filename of the *define_model.c* file.
+        logger: logging system.
+    """
+    # Open template
+    fitslist = []
+
+    # Validate oversample
+    if len(oversample)==1 and len(oversample)!=len(cell_sizes):
+        oversample = oversample * len(cell_sizes)
+    elif len(oversample)==len(cell_sizes):
+        pass
+    else:
+        raise ValueError('The length of oversample != number of grids')
+
+    # Start from smaller to larger grid
+    for i,(grid,cellsz) in enumerate(zip(grids, cell_sizes)):
+        # Initialize grid axes
+        print '='*80
+        logger.info('Working on grid: %i', i)
+        logger.info('Oversampling factor: %i', oversample[i])
+        logger.info('Grid cell size: %i', cellsz)
+        # Multiply by units
+        x = grid[0]['x'] * grid[1]['x']
+        y = grid[0]['y'] * grid[1]['y']
+        z = grid[0]['z'] * grid[1]['z']
+        xi = np.unique(x)
+        yi = np.unique(y)
+        zi = np.unique(z)
+
+        # Initial value
+        dens = None
+        temp_func = None
+
+        # Get the total values
+        for yso_name, yso in yso_dict.items():
+            logger.info('Evaluating the functions for source: %s', yso_name)
+            if temp_func is None:
+                # Load temperature function
+                # By definition the temperature function is the same for all
+                # Sources, because is calculated over the whole grid with all
+                # sources in the dust continuum
+                if yso.params.get('DEFAULT', 'quantities_from'):
+                    hmodel = yso.params.get('DEFAULT', 'quantities_from')
+                    logger.info('Loading Hyperion model: %s', os.path.basename(hmodel))
+                    hmodel = ModelOutput(os.path.expanduser(hmodel))
+                    q = hmodel.get_quantities()
+                    temperature = np.sum(q['temperature'].array[1:], axis=0)
+                    r, th = q.r*u.cm, q.t*u.rad
+                    temp_func = get_temp_func(yso.params, temperature, r, th)
+                elif dust_out is not None:
+                    logger.info('Loading Hyperion model: %s', os.path.basename(dust_out))
+                    hmodel = ModelOutput(os.path.expanduser(dust_out))
+                    q = hmodel.get_quantities()
+                    temperature = np.sum(q['temperature'].array[1:], axis=0)
+                    r, th = q.r*u.cm, q.t*u.rad
+                    temp_func = get_temp_func(yso.params, temperature, r, th)
+                else:
+                    raise NotImplementedError
+
+            # Density and velocity
+            dens_aux, (vx_aux, vy_aux, vz_aux), temp_aux = phys_oversampled_cart(
+                    xi, yi, zi, yso, temp_func, oversample=oversample[i], 
+                    logger=logger)
+            if dens is None:
+                dens = dens_aux
+                vx = vx_aux
+                vy = vy_aux
+                vz = vz_aux
+                temp = temp_aux
+            else:
+                # Temperature should not change
+                dens = dens + dens_aux
+                vx = vx + vx_aux
+                vy = vy + vy_aux
+                vz = vz + vz_aux
+
+        # Replace the inner region by rebbining the previous grid
+        if i>0:
+            # Walls of central cells
+            j = cell_sizes.index(cellsz)
+            xlen = cell_sizes[j-1] * len(xprev) * u.au
+            nxmid = int(xlen.value) / cellsz
+            xw = np.linspace(-0.5*xlen.value, 0.5*xlen.value, nxmid+1) * u.au
+            ylen = cell_sizes[j-1] * len(yprev) * u.au
+            nymid = int(ylen.value) / cellsz
+            yw = np.linspace(-0.5*ylen.value, 0.5*ylen.value, nymid+1) * u.au
+            zlen = cell_sizes[j-1] * len(zprev) * u.au
+            nzmid = int(zlen.value) / cellsz
+            zw = np.linspace(-0.5*zlen.value, 0.5*zlen.value, nzmid+1) * u.au
+            if nxmid==nymid==nzmid==0:
+                logger.warning('The inner grid is smaller than current grid size')
+            else:
+                logger.info('The inner %ix%ix%i cells will be replaced', nxmid,
+                        nymid, nzmid)
+
+                # Rebin previous grid
+                # Density
+                vol_prev = (cell_sizes[j-1]*u.au)**3
+                vol = (cellsz * u.au)**3
+                N_cen = vol_prev.cgs * rebin_regular_nd(dens_prev.cgs.value, 
+                        zprev.cgs.value, yprev.cgs.value, xprev.cgs.value, 
+                        bins=(zw.cgs.value,yw.cgs.value,xw.cgs.value), 
+                        statistic='sum') * dens_prev.cgs.unit
+                dens_cen = N_cen / vol
+                dens_cen = dens_cen.to(dens.unit)
+                # Temperature
+                T_cen = rebin_regular_nd(temp_prev.value * dens_prev.cgs.value,
+                        zprev.cgs.value, yprev.cgs.value, xprev.cgs.value, 
+                        bins=(zw.cgs.value,yw.cgs.value, xw.cgs.value), 
+                        statistic='sum') * temp_prev.unit * dens_prev.cgs.unit
+                T_cen = vol_prev.cgs * T_cen / N_cen.cgs
+                T_cen = T_cen.to(temp.unit)
+
+                # Replace
+                dens[len(zi)/2-nzmid/2:len(zi)/2+nzmid/2,
+                        len(yi)/2-nymid/2:len(yi)/2+nymid/2,
+                        len(xi)/2-nxmid/2:len(xi)/2+nxmid/2] = dens_cen
+                temp[len(zi)/2-nzmid/2:len(zi)/2+nzmid/2,
+                        len(yi)/2-nymid/2:len(yi)/2+nymid/2,
+                        len(xi)/2-nxmid/2:len(xi)/2+nxmid/2] = T_cen
+        dens_prev = dens
+        temp_prev = temp
+        xprev = xi
+        yprev = yi
+        zprev = zi
+
+        # Linewidth and abundance
+        linewidth = np.zeros(temp.shape) * u.km/u.s
+        abundance = np.zeros(temp.shape)
+        for j, yso in enumerate(yso_dict.values()):
+            linewidth = linewidth + yso.linewidth(x, y, z, temp)
+            abn, min_abundance = yso.abundance(x, y, z, temp, 
+                    index=j+1, ignore_min=True)
+            abundance = abundance + abn
+
+        # Replace out of range values
+        dens[dens.cgs<=0./u.cm**3] = 10./u.cm**3
+        temp[np.isnan(temp.value)] = 2.7 * u.K
+        linewidth[linewidth==0.*u.km/u.s] = 0.5 * u.km / u.s
+        abundance[abundance==0.] = min_abundance
+
+        # Write FITS
+        fitsnames = write_fits(os.path.expanduser(save_dir), 
+                **{'temp%i'%i: temp.value, 'dens%i'%i: dens.cgs.value, 
+                'vx%i'%i: vx.cgs.value, 'vy%i'%i: vy.cgs.value, 'vz%i'%i:
+                vz.cgs.value, 'abn%i'%i: abundance,
+                'lwidth%i'%i: linewidth.cgs.value})
+        fitslist += fitsnames
+
+    return fitslist
+
+# Keep for backwards compatibility with script
 def set_physical_props(yso, grids, cell_sizes, save_dir, oversample=3,
-        logger=get_logger(__name__)):
+        dust_out=None, logger=get_logger(__name__)):
     """Calculate and write the physical properties of the model.
 
     Parameters:
@@ -326,6 +487,13 @@ def set_physical_props(yso, grids, cell_sizes, save_dir, oversample=3,
         hmodel = yso.params.get('DEFAULT', 'quantities_from')
         logger.info('Loading Hyperion model: %s', os.path.basename(hmodel))
         hmodel = ModelOutput(os.path.expanduser(hmodel))
+        q = hmodel.get_quantities()
+        temperature = np.sum(q['temperature'].array[1:], axis=0)
+        r, th = q.r*u.cm, q.t*u.rad
+        temp_func = get_temp_func(yso.params, temperature, r, th)
+    elif dust_out is not None:
+        logger.info('Loading Hyperion model: %s', os.path.basename(dust_out))
+        hmodel = ModelOutput(os.path.expanduser(dust_out))
         q = hmodel.get_quantities()
         temperature = np.sum(q['temperature'].array[1:], axis=0)
         r, th = q.r*u.cm, q.t*u.rad
@@ -397,39 +565,11 @@ def set_physical_props(yso, grids, cell_sizes, save_dir, oversample=3,
                 temp[len(zi)/2-nzmid/2:len(zi)/2+nzmid/2,
                         len(yi)/2-nymid/2:len(yi)/2+nymid/2,
                         len(xi)/2-nxmid/2:len(xi)/2+nxmid/2] = T_cen
-                #vx[len(zi)/2-nzmid/2:len(zi)/2+nzmid/2,
-                #        len(yi)/2-nymid/2:len(yi)/2+nymid/2,
-                #        len(xi)/2-nxmid/2:len(xi)/2+nxmid/2] = 0.
-                #vy[len(zi)/2-nzmid/2:len(zi)/2+nzmid/2,
-                #        len(yi)/2-nymid/2:len(yi)/2+nymid/2,
-                #        len(xi)/2-nxmid/2:len(xi)/2+nxmid/2] = 0.
-                #vz[len(zi)/2-nzmid/2:len(zi)/2+nzmid/2,
-                #        len(yi)/2-nymid/2:len(yi)/2+nymid/2,
-                #        len(xi)/2-nxmid/2:len(xi)/2+nxmid/2] = 0.
-        #    dens[len(zi)/2-nzmid/2:len(zi)/2+nzmid/2,
-        #            len(yi)/2-nymid/2:len(yi)/2+nymid/2,
-        #            len(xi)/2-nxmid/2:len(xi)/2+nxmid/2] = 1E8*dens.unit
-        #    temp[len(zi)/2-nzmid/2:len(zi)/2+nzmid/2,
-        #            len(yi)/2-nymid/2:len(yi)/2+nymid/2,
-        #            len(xi)/2-nxmid/2:len(xi)/2+nxmid/2] = 500*temp.unit
         dens_prev = dens
         temp_prev = temp
         xprev = xi
         yprev = yi
         zprev = zi
-
-        #if mass_prev:
-        #    ZN, YN, XN = np.meshgrid(zi, yi, xi, indexing='ij')
-        #    ind = (np.abs(XN)<=) & (np.abs(YN)<=) & (np.abs(ZN)<=)
-        #    dens[ind] = dens[ind]/
-        #    mass_prev = mass
-
-        # Temperature
-        #rebin = i==2 and rebin_small
-        #temp = rebin_2Dsph_to_cart(temperature, (xi, yi, zi), yso, pos=(r, th), 
-        #        rebin=rebin, interp=True, weights=density[0,:,:], logger=logger)
-        #temp = temp*u.K
-        #temp[temp<2.7*u.K] = 2.7*u.K
 
         # Abundance
         abundance = yso.abundance(temp)
