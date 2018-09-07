@@ -16,7 +16,8 @@ def density(r, th, params, component='dust'):
     """
     # Reference density
     rho0 = params.getquantity('Envelope', 'mdot').cgs / \
-            (4.*np.pi * np.sqrt(ct.G.cgs*params.getquantity('Star','m').cgs*\
+            (4.*np.pi * np.sqrt(ct.G.cgs*\
+            params.getquantity('Star','m').cgs*\
             params.getquantity('Envelope','rc').cgs**3))
 
     # Angle variables
@@ -42,7 +43,7 @@ def density(r, th, params, component='dust'):
     # Outside the envelope
     rsub = params.getquantity('Envelope','rsub').cgs
     comp_rmin = params.getfloat('Envelope','rmin_%s' % component)
-    mask = (r.cgs > params.getquantity('Envelope','rout').cgs) | \
+    mask = (r.cgs > params.getquantity('Envelope','renv').cgs) | \
             (r.cgs < rsub*comp_rmin)
     density[mask] = 0.
 
@@ -85,7 +86,7 @@ def velocity(r, th, params, component='dust'):
     rsub = params.getquantity('Envelope','rsub').cgs
     comp_rmin = params.getfloat('Envelope','rmin_%s' % component)
     rstar = params.getquantity('Star','r').cgs
-    mask = (r.cgs > params.getquantity('Envelope','rout').cgs) | \
+    mask = (r.cgs > params.getquantity('Envelope','renv').cgs) | \
             (r.cgs < rsub*comp_rmin) | (r.cgs<rstar)
     vr[mask] = 0.
     vth[mask] = 0.

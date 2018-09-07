@@ -50,7 +50,7 @@ def density(r, th, params, component='dust'):
     # Limit values
     comp_rmin = params.getfloat('Cavity','rmin_%s' % component)
     rsub = params.getquantity('Cavity','rsub').cgs
-    rmax = params.getquantity('Cavity','rout').cgs
+    rmax = params.getquantity('Cavity','rcav').cgs
     density[r.cgs>rmax] = 0.
     density[r.cgs<rsub*comp_rmin] = 0.
 
@@ -91,7 +91,7 @@ def velocity(r, th, params, component='dust'):
         vphi = np.zeros(vr.shape) * vr.unit
 
         # Mask
-        rmax = params.getquantity('Cavity','rout').cgs
+        rmax = params.getquantity('Cavity','rcav').cgs
         vr[r.cgs>rmax] = 0.
         mask = get_mask(r, th, params)
         vr[mask] = 0.

@@ -27,7 +27,7 @@ def flared(r, th, params, component='dust'):
     #rmin = params.getfloat('Disc','rmin') *\
     #        params.getquantity('Disc','rsub').cgs
     rmin = dust_rmin * rsub
-    rmax = params.getquantity('Disc','rmax').cgs
+    rmax = params.getquantity('Disc','rdisc').cgs
     beta = params.getfloat('Disc','beta')
     p = beta - params.getfloat('Disc','alpha')
     r0 = params.getquantity('Disc','r0').cgs
@@ -37,7 +37,7 @@ def flared(r, th, params, component='dust'):
     intg = integrate_powerlaw(rmin, rmax, 1.0 + p)
     intg = intg * r0**-p
     intg = (2.*np.pi)**1.5 * h0 * intg
-    rho0 = params.getquantity('Disc','m').cgs/intg
+    rho0 = params.getquantity('Disc','mdisc').cgs/intg
 
     # Convert coordinates
     R = r.cgs * np.sin(th.to(u.rad))
@@ -88,7 +88,7 @@ def keplerian_rotation(r, th, params, component='dust'):
         vphi = rot_dir * vphi
 
         # Outside the disc
-        rmax = params.getquantity('Disc','rmax').cgs
+        rmax = params.getquantity('Disc','rdisc').cgs
         vphi[r.cgs>rmax] = 0.
         assert vphi.cgs.unit == u.cm/u.s
 
