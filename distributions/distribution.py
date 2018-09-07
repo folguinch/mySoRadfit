@@ -1,4 +1,9 @@
+import os
 from abc import ABCMeta, abstractmethod
+from configparser import ExtendedInterpolation
+
+from myutils.logger import get_logger
+from myutils.myconfigparser import myConfigParser
 
 class Distribution(object):
     """Base distribution class.
@@ -7,6 +12,7 @@ class Distribution(object):
         __params (myConfigparser): model parameters
     """
     __metaclass__ = ABCMeta
+    logger = get_logger(__name__, __package__+'.log')
 
     def __init__(self, param_file):
         """Initialize distribution.
@@ -14,6 +20,7 @@ class Distribution(object):
         Parameters:
             param_file (str): distribution parameter file.
         """
+        self.logger.info('Loading parameters from: %s', param_file)
         self.__params = self.load_config(param_file)
 
     def __getitem__(self, key):
@@ -22,7 +29,7 @@ class Distribution(object):
         Only keys with a section and parameter are allowed."""
         if len(key)!=2:
             raise KeyError('Key must be length 2: %r' % key)
-        self.__validate_keys(*keys)
+        self._validate_keys(*key)
         try:
             # Load a quantity by default
             value = self.__params.getquantity(*key)
@@ -40,16 +47,11 @@ class Distribution(object):
     def update(self, section, param, value):
         """Update the value of a parameter"""
         # Check units
-        old = self[section, param]
-        if not hasattr(value, 'unit') and hasattr(old, 'unit'):
-            self.__params[section][param] = value*old.unit
-        elif hasattr(value, 'unit') and hasattr(old, 'unit'):
-            self.__params[section][param] = value.to(old.unit)
-        elif hasattr(value, 'unit') and not hasattr(old, 'unit'):
-            raise ValueError('The parameter *%s* in %s does not have unit' % \
-                    (param, section))
-        else:
-            self.__params[section][param] = value
+        value = self._convert_units(section, param, value)
+
+        # Update
+        newval = '%.8e %s' % (value.value, value.unit.to_string(format='cds'))
+        self.__params[section][param] = newval
 
     @property
     def params(self):
@@ -84,7 +86,29 @@ class Distribution(object):
 
         return parser
 
-    def __validate_keys(self, section, param=None):
+    def _convert_units(self, section, param, value):
+        """Check and convert units for an input value.
+
+        Parameters:
+            section (str): distribution section.
+            param (str): parameter name
+            value (quantity or float): value to convert
+        """
+        self._validate_keys(section, param)
+
+        # Check unit compatibility of new value
+        old = self[section, param]
+        if not hasattr(value, 'unit') and hasattr(old, 'unit'):
+            return value * old.unit
+        elif hasattr(value, 'unit') and hasattr(old, 'unit'):
+            return value.to(old.unit)
+        elif hasattr(value, 'unit') and not hasattr(old, 'unit'):
+            raise ValueError('The parameter *%s* in %s does not have unit' % \
+                    (param, section))
+        else:
+            return value
+
+    def _validate_keys(self, section, param=None):
         """Validate keys"""
         # Check section
         if section not in self.sections:
@@ -111,16 +135,19 @@ class Distribution(object):
             get_db_format (bool, optional): get an array with formats for
                 databases
         """
+        self.logger.debug('Flattening parameters:')
         keys, vals, fmts = [], [], []
-        for section in self.sections():
+        for section in self.sections:
             for param in self.params[section]:
                 # Ignores
                 if param in ignore_params:
+                    self.logger.debug('Ignoring parameter: %s', param)
                     continue
 
                 # Keys
                 if param in self.params['DEFAULT']:
-                    key += ['%s_%s' % (param, section.lower())]
+                    self.logger.debug('Renaming parameter: %s', param)
+                    keys += ['%s_%s' % (param, section.lower())]
                 else:
                     keys += [param]
 
@@ -142,5 +169,4 @@ class Distribution(object):
             return (keys, vals, fmts)
         else:
             return (keys, vals)
-
 
