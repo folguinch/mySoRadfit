@@ -3,9 +3,12 @@ from collections import OrderedDict
 from abc import ABCMeta, abstractmethod
 from configparser import ExtendedInterpolation
 
+import numpy as np
 from myutils.logger import get_logger
 from myutils.myconfigparser import myConfigParser
 from myutils.array_utils import load_struct_array
+
+from .distributions.yso import YSO
 
 
 class BaseModel(object):
@@ -16,11 +19,12 @@ class BaseModel(object):
         params (OrderedDict): model physical parameters.
         setup (myConfigParser): model rt setup.
         images (myConfigParser): model images setup.
+        grids (dict): grids by rt.
         logger: logging system.
     """
 
     __metaclass__ = ABCMeta
-    logger = get_logger(__name__)
+    logger = get_logger(__name__, __package__+'.log')
 
     def __init__(self, name=None, config=None, params=None, setup=None,
             source_names=['source'], locs=[(0,0,0)]):
@@ -51,6 +55,7 @@ class BaseModel(object):
         self.params = OrderedDict()
         self.setup = None
         self.images = None
+        self.grids = {}
 
         # Load configuration
         if config and not params and not setup:
@@ -153,20 +158,30 @@ class BaseModel(object):
         Parameters:
             rt: RT transfer config section.
         """
-        grids = []
-        for grid in self.setup.getlist(rt, 'grids'):
-            self.logger.info('Loading grid: %s', os.path.basename(grid))
-            fname = os.path.realpath(os.path.expanduser(grid))
-            grid = load_struct_array(fname, usecols=None)
-            grids += [grid]
+        if rt in self.grids:
+            return self.grids[rt]
 
-        cell_sizes = self.setup.getintlist(rt, 'cell_sizes')
+        else:
+            grids = []
+            for grid in self.setup.getlist(rt, 'grids'):
+                self.logger.info('Loading grid: %s', os.path.basename(grid))
+                fname = os.path.realpath(os.path.expanduser(grid))
+                grid = load_struct_array(fname, usecols=None)
+                grids += [grid]
+            
+            # other values
+            cell_sizes = self.setup.getintlist(rt, 'cell_sizes')
+            oversample = self.setup.getintlist(rt, 'oversample')
 
-        # Sort grid sizes
-        self.logger.info('Sorting grids by cell size (a->Z)')
-        ind = np.argsort(cell_sizes)
-        grids = map(lambda x: grids[x], ind)
-        cell_sizes = map(lambda x: cell_sizes[x], ind)
+            # Sort grid sizes
+            self.logger.info('Sorting grids by cell size (a->Z)')
+            ind = np.argsort(cell_sizes)
+            grids = map(lambda x: grids[x], ind)
+            cell_sizes = map(lambda x: cell_sizes[x], ind)
+            oversample = map(lambda x: oversample[x], ind)
 
-        return grids, cell_sizes
+            # To save time
+            self.grids[rt] = grids, cell_sizes
+
+            return grids, cell_sizes, oversample
 

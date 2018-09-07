@@ -3,8 +3,10 @@ from collections import OrderedDict
 import numpy as np
 from myutils.time_utils import get_timestamp
 from myutils.database import load_database
+from myutils.logger import get_logger
 
 from .model_base import BaseModel
+from .distributions.yso import YSO
 
 class modelBayes(BaseModel):
     """Manages the models for a bayesian fit
@@ -19,6 +21,8 @@ class modelBayes(BaseModel):
         logger: logging system.
     """
 
+    logger = get_logger(__name__, __package__+'.log')
+
     def __init__(self, config, database='models_db.sqlite'):
         """Initialize model.
 
@@ -30,20 +34,27 @@ class modelBayes(BaseModel):
         # Initialize model
         name = get_timestamp()
         super(modelBayes, self).__init__(name=name, config=config)
-        self.config = self.config['source']
+        #self.config = self.config['source']
 
         # Database
         self.db = None
-        self.db = self._load_database(database)
+        self.logger.info('Model database: %s', database)
+        self._load_database(database)
 
         # Likelihood
-        self.priors = self.load_priors()
-
-        # Filter parameters
-        #self.fixed = filter(self._filter_params, self.param_list)
+        self.priors = OrderedDict.fromkeys(self.config.sections())
+        self.load_priors()
 
     def load_params(self):
-        super(modelBayes, self).load_params()
+        """Load parameter file for each model source."""
+        print('-'*50)
+        for section in self.config.sections():
+            self.logger.info('Loading parameters for: %s', section)
+            self.params[section] = YSO(self.config[section]['params'])
+            print('-'*50)
+
+    def fill_grids(self):
+        super(modelBayes, self).fill_grids()
 
     @property
     def param_list(self):
@@ -58,10 +69,12 @@ class modelBayes(BaseModel):
 
     def load_priors(self):
         """Load the prior for the parameters of each source"""
-        self.priors = OrderedDict.fromkeys(self.config.sections())
+        print('-'*50)
         for key in self.priors.keys():
-            self.priors[key] = self._load_parser(
-                    self.config[key]['prior'])
+            self.logger.info('Loading priors for: %s', key)
+            self.logger.info('Priors file: %s', self.config[key]['priors'])
+            self.priors[key] = self._load_parser(self.config[key]['priors'])
+            print('-'*50)
 
     def get_logprior(self, source, param):
         """Get the natural logarithm of the prior value for a parameter.
@@ -70,7 +83,7 @@ class modelBayes(BaseModel):
             source (str): model source name
             param (str): parameter name
         """
-        if self.priors[source]['type']=='uniform':
+        if self.priors[source][param]['type']=='uniform':
             section = self.priors[source][param]['section']
             val = self.params[source][section, param]
             vmin = self.priors[source].getquantity(param, 'min')
@@ -93,7 +106,7 @@ class modelBayes(BaseModel):
         Returns:
             priors (float): the natural logarithm of all the priors.
         """
-        assert source in self.config
+        assert source is None or source in self.config
 
         prior = 0.
 
@@ -117,6 +130,13 @@ class modelBayes(BaseModel):
     # This only works for a model with one source
     def get_vlsr(self):
         return self.params['source']['Velocity','vlsr']
+
+    def get_dimensions(self):
+        """Get the number of parameters to fit"""
+        ndim = 0
+        for key,item in self.priors.items():
+            ndim += len(item.sections())
+        return ndim
 
     def update_params(self, values):
         """Update the parameters of the model
@@ -144,27 +164,24 @@ class modelBayes(BaseModel):
 
         # Change model
         for src in self.params.keys():
-            for key in self.priors[src].sections():
+            for i, key in enumerate(self.priors[src].sections()):
                 section = self.priors[src].get(key, 'section', fallback=None)
                 if section is None or section.lower()=='all':
-                    val = values.pop(0)
-                    for section in self.params[key].sections():
-                        self.params[key].update(section, key, val)
+                    val = values[i]
+                    for section in self.params[src].sections():
+                        self.params[src].update(section, key, val)
                 else:
-                    self.params[key].update(section, key, values.pop(0))
+                    self.params[src].update(section, key, values[i])
 
             # Update database
             if len(self.params.keys())==1:
-                validate = self._update_database(table='models')
+                validate = self.update_database(table='models')
             else:
-                validate = self._update_database(table=src, validate=False)
-
-        if len(values)!=0:
-            raise IndexError('There are unspecified parameters')
+                validate = self.update_database(table=src, validate=False)
 
         return validate
 
-    def _load_database(self, filename, table='models'):
+    def _load_database(self, filename, table='models', update=False):
         """Load models database
 
         Parameters:
@@ -173,13 +190,16 @@ class modelBayes(BaseModel):
         """
         if len(self.params.keys())==1:
             key = self.params.keys()[0]
-            keys, vals, fmts = self.params[key].flatten(get_db_format=True)
+            keys, vals, fmts = self.params[key].flatten(
+                    ignore_params=self.config.getlist(key, 'db_ignore_params'),
+                    get_db_format=True)
             keys = ['ID'] + keys
             vals = [self.name] + vals
-            fmts = ['TEXT PRIMARY KEY']
+            fmts = ['TEXT PRIMARY KEY'] + fmts
             self.db = load_database(filename, table, keys, fmts)
-            self._update_database(table=table, keys=keys, vals=vals,
-                    validate=False)
+            if update:
+                self.update_database(table=table, keys=keys, vals=vals,
+                        validate=False)
         else:
             # Models with more than 1 source are exceptional and probably unique
             for src, yso in self.params.items():
@@ -189,10 +209,10 @@ class modelBayes(BaseModel):
                 else:
                     self.db.create_table(src, keys, fmts)
 
-                self._update_database(table=src, keys=keys, vals=vals,
+                self.update_database(table=src, keys=keys, vals=vals,
                         validate=False)
 
-    def _update_database(self, table='models', keys=None, vals=None, 
+    def update_database(self, table='models', keys=None, vals=None, 
             validate=True):
         """Update the database with the current model parameters
         
@@ -204,7 +224,13 @@ class modelBayes(BaseModel):
         """
 
         if vals is None or keys is None:
-            keys, val = self.params[source or table].flatten()
+            if len(self.params.keys())==1:
+                source = self.params.keys()[0]
+            else:
+                source = None
+            keys, vals = self.params[source or table].flatten(
+                    ignore_params=self.config.getlist(source, 'db_ignore_params'),
+                    get_db_format=False)
             keys = ['ID'] + keys
             vals = [self.name] + vals
 
@@ -231,6 +257,39 @@ class modelBayes(BaseModel):
         if res is None:
             return True
         else:
+            self.logger.warn('Found a duplicate model: %s', res['ID'])
             return res['ID']
 
+    def get_random_initial(self, n):
+        """Create an initial guess based on the input parameters
+        
+        Parameters:
+            n (int): number of walkers
+        """
+        p0 = []
+        
+        for src, val in self.priors.items():
+            for prior in val.sections():
+                section = val[prior]['section']
+                inval = self.params[src][section,prior]
+                if val[prior]['type'].lower() == 'uniform':
+                    low = val.getquantity(prior, 'min').to(inval.unit)
+                    high = val.getquantity(prior, 'max').to(inval.unit)
+                    p0 += [np.random.uniform(low.value, high.value, n)]
+                else:
+                    raise NotImplementedError
+
+        return np.array(p0).T
+
+    def get_rt_list(self):
+        """Get a list with all the RTs used by the images"""
+        rts = []
+        for sec in self.images.sections():
+            rt = self.images.get(sec, 'rt')
+            if rt not in self.setup.sections():
+                self.logger.warn('Dropping rt: %s', rt)
+            else:
+                rts += [rt]
+        
+        return set(rts)
 

@@ -1,4 +1,5 @@
 from astroSource.container import Container
+from myutils.logger import get_logger
 from myutils.decorators import REGISTERED_FUNCTIONS
 
 class modelOutput(Container):
@@ -12,14 +13,14 @@ class modelOutput(Container):
     """
     logger = get_logger(__name__)
 
-    def __init__(self, name, config):
-        """Defines a new model output.
+    #def __init__(self, name, config):
+    #    """Defines a new model output.
 
-        Parameters:
-            name (str): model name
-            config (str): configuration file name
-        """
-        super(modelOutput, self).__init__(name, config)
+    #    Parameters:
+    #        name (str): model name
+    #        config (myConfigParser): configuration
+    #    """
+    #    super(modelOutput, self).__init__(name, config=config)
 
     def load_data(self, data_name, model_file, PA=0., vlsr=0.):
         assert data_name in self.config.sections()
