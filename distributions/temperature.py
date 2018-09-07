@@ -35,7 +35,7 @@ def get_temp_func(params, temperature, r, th, phi=None, extrapolate=True, **kwar
         rstar = params.getquantity('Star','r')
         rmin = params.getfloat('Disc','rmin_dust') *\
                params.getquantity('Disc','rsub')
-        rout = params.getquantity('Envelope','rout')
+        rout = params.getquantity('Envelope','renv')
         tstar = params.getquantity('Star','t')
 
         # Inside star
