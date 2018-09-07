@@ -1,12 +1,13 @@
 import os
 from itertools import product
-from configparser import ExtendedInterpolation
 
 import numpy as np
 import astropy.units as u
+import astropy.constants as ct
 from astropy.io import fits
-from myutils.myconfigparser import myConfigParser
 from myutils.coordinates import cart_to_sph, vel_sph_to_cart
+from myutils.logger import get_logger
+from myutils.decorators import timed
 
 from .distribution import Distribution
 import ulrich, outflow, discs
@@ -51,6 +52,8 @@ class YSO(Distribution):
         loc (iterable): location of the source in the grid.
     """
 
+    logger = get_logger(__name__, __package__+'.log')
+
     def __init__(self, params, loc=(0,0,0)):
         """Initialize the YSO.
 
@@ -62,8 +65,9 @@ class YSO(Distribution):
         super(YSO, self).__init__(params)
 
         # For backwards compatibilty:
-        if 'Geometry' in self.__params.sections():
-            self.loc = self.__params.getintlist('Geometry', 'loc')
+        if 'Star' in self.sections:
+            self.loc = self.params.getquantity('Star', 'loc')
+            self.logger.info('Replacing location from parameters: %s', self.loc)
         else:
             self.loc = loc
 
@@ -96,40 +100,43 @@ class YSO(Distribution):
             tie_rc (boolean, optional): it ties the value of the centrifugal
                 radius with the disc value (only if envelope is ulrich)
         """
-        self.__validate_keys(section, param)
+        #if section.lower()=='envelope' and param.lower()=='mstar':
+        #    super(YSO, self).update('Star', param, value)
+        #    super(YSO, self).update(section, param, value)
 
-        # Check unit compatibility of new value
-        old = self[section, param]
-        if not hasattr(value, 'unit') and hasattr(old, 'unit'):
-            value = value * old.unit
-        elif hasattr(value, 'unit') and hasattr(old, 'unit'):
-            value = value.to(old.unit)
-        elif hasattr(value, 'unit') and not hasattr(old, 'unit'):
-            raise ValueError('The parameter *%s* in %s does not have unit' % \
-                    (param, section))
-        else:
-            pass
-
-        if section.lower()=='envelope' and param.lower()=='m_star':
-            assert hasattr(value, 'unit')
-            self.__params['Star'][param] = value
-            self.__params[section][param] = value
-        elif section.lower()=='star' and param.lower()=='m':
-            assert hasattr(value, 'unit')
-            mstar = self.params.getquantity('Star', 'm')
-            mdotold = self.params.getquantity(section, 'mdot')
-            mdotnew = np.sqrt(value/mstar) * mdot
-            self.__params['Star'][param] = value
-            self.__params['Envelope']['m_star'] = value
-            self.__params['Envelope']['mdot'] = mdotnew.to(mdotnew.unit)
+        env_type = self.params['Envelope']['type'].lower()
+        if section.lower()=='star' and param.lower()=='m' and env_type=='ulrich':
+            self.logger.info('Updating stellar mass and scaling envelope ' +\
+                    'infall rate')
+            value = self._convert_units(section, param, value)
+            mstar = self[section, param]
+            mdotold = self['Envelope', 'mdot']
+            mdotnew = np.sqrt(value/mstar) * mdotold
+            super(YSO, self).update(section, param, value)
+            #super(YSO, self).update('Envelope', 'mstar_ulrich', value)
+            super(YSO, self).update('Envelope', 'mdot',
+                    mdotnew.to(mdotold.unit))
         elif (section.lower()=='envelope' or section.lower()=='disc') and \
                 self.__params['Envelope']['type']=='ulrich' and \
-                (param.lower()=='r' or param.lower()=='rc') and tie_rc:
-            assert hasattr(value, 'unit')
-            self.__params['Envelope']['rc'] = value
-            self.__params['Disc']['r'] = value
+                (param.lower()=='rdisc' or param.lower()=='rc') and tie_rc:
+            super(YSO, self).update('Envelope', 'rc', value)
+            super(YSO, self).update('Disc', 'rdisc', value)
         else:
-            self.__params[section][param] = value
+            super(YSO, self).update(section, param, value)
+
+    def flatten(self, ignore_params=[], get_db_format=False):
+        """Return 2 arrays containg parameters and values
+
+        Parameters names in the DEFAULT are renamed *<parameter>_<section>*.
+        Parameters in list format are passed as a string
+
+        Parameters:
+            get_db_format (bool, optional): get an array with formats for
+                databases
+        """
+        return super(YSO, self).flatten(
+                ignore_params=['dust_dir']+ignore_params, 
+                get_db_format=get_db_format)
 
     def from_fits(self, quantity, section='DEFAULT'):
         """Load a quantity from a FITS file.
@@ -169,7 +176,6 @@ class YSO(Distribution):
         fname = os.path.join(dirname, fname)
         hdu = fits.PrimaryHDU(value)
         hdu.writeto(fname, overwrite=True)
-
 
     def density(self, x, y, z, component='dust', save_components=False,
             from_file=False):
@@ -211,19 +217,6 @@ class YSO(Distribution):
         else:
             envelope = cavity = 0.
 
-        # Overlap
-        #if min_height_to_disc is not None:
-        #    rdisc = self.params.getquantity('Disc', 'rmax')
-        #    ind = (~mask) & (np.abs(z) <= min_height_to_disc.to(z.unit)) & \
-        #            (r.cgs<=rdisc.cgs) 
-        #    cavity[ind] = (cavity[ind]+disc[ind]+envelope[ind])/2.
-
-        #    ind = mask & (np.abs(z) <= min_height_to_disc.to(z.unit)) & \
-        #            (r.cgs<=rdisc.cgs)
-        #    disc[ind] = disc[ind]/2
-        #    envelope[ind] = envelope[ind]/2
-        #envelope[~mask] = 0
-        #disc[~mask] = 0
         if save_components:
             self.to_fits('density_disc', disc)
             self.to_fits('density_envelope', envelope)
@@ -244,7 +237,7 @@ class YSO(Distribution):
         r, th, phi = cart_to_sph(x, y, z, pos0=self.loc)
 
         # Disc radius
-        rdisc = self.params.getquantity('Disc', 'rmax')
+        rdisc = self.params.getquantity('Disc', 'rdisc')
 
         # Velocity in Envelope and cavity
         if self.params.get('Velocity', 'envelope', fallback='').lower() == 'ulrich':
@@ -289,45 +282,9 @@ class YSO(Distribution):
         vth[np.isinf(vth.value)] = 0.
         vphi[np.isinf(vphi.value)] = 0.
 
-        #vr_disc[~mask] = 0.
-        #vth_disc[~mask] = 0.
-        #vphi_disc[~mask] = 0.
-
-        ## Combine
-        ## Overlaping section
-        #if min_height_to_disc is not None:
-        #    #ind2 = (r.cgs<=rdisc.cgs) & \
-        #    #        (np.abs(z) < min_height_to_disc.to(z.unit))
-        #    #ind = ind | ind2
-        #    ind = (~mask) & (np.abs(z) <= min_height_to_disc.to(z.unit)) & \
-        #            (r.cgs<=rdisc.cgs) 
-        #    # Get the weights
-        #    if disc_density is None:
-        #        disc_density = discs.flared(r, th, self.params, ignore_rim=True)
-        #    if cavity_density is None:
-        #        cavity_density, mask2 = outflow.density(r, th, self.params,
-        #                ignore_rim=True)
-
-        #    # Weighted average where the cavity and outflow overlaps
-        #    vr_out[ind] = (disc_density[ind].cgs*vr_disc[ind].cgs +
-        #            cavity_density[ind].cgs*vr_out[ind].cgs) / \
-        #                    (disc_density[ind].cgs+cavity_density[ind].cgs)
-        #    vth_out[ind] = (disc_density[ind].cgs*vth_disc[ind].cgs +
-        #            cavity_density[ind].cgs*vth_out[ind].cgs) / \
-        #                    (disc_density[ind].cgs+cavity_density[ind].cgs)
-        #    vphi_out[ind] = (disc_density[ind].cgs*vphi_disc[ind].cgs +
-        #            cavity_density[ind].cgs*vphi_out[ind].cgs) / \
-        #                    (disc_density[ind].cgs+cavity_density[ind].cgs)
-        #vr = vr_env.cgs + vr_out.cgs
-        #vth = vth_env.cgs + vth_out.cgs
-        #vphi = vphi_env.cgs + vphi_out.cgs
-        #ind = mask & (r.cgs<=rdisc.cgs)
-        #vr[ind] = vr_disc.cgs[ind]
-        #vth[ind] = vth_disc.cgs[ind]
-        #vphi[ind] = vphi_disc.cgs[ind]
-
         return vel_sph_to_cart(vr, vth, vphi, th, phi)
 
+    @timed
     def get_all(self, x, y, z, temperature=None, component='dust', nquad=1):
         """Optimized function for obtaining the 3-D density and the velocity
         simultaneously.
@@ -408,29 +365,70 @@ class YSO(Distribution):
         else:
             return disc+envelope+cavity, vx, vy, vz
 
-    def abundance(self, temperature):
+    def abundance(self, x, y, z, temperature, key='Abundance', index='',
+            ignore_min=False):
         """Molecular abundance.
 
         Parameters:
             temperature: the temperature distribution.
         """
-        Ts = np.atleast_1d(self.params.getquantity('Abundance', 't'))
-        abn = np.array(self.params.getfloatlist('Abundance','abn'))
-        assert len(Ts)==len(abn)-1
-        abundance = np.ones(temperature.shape) * np.min(abn)
-
-        for i,T in enumerate(Ts):
+        # Option formats
+        if index!='':
+            key = key + '%s' % index 
+            t_fmt = 't%s%s' % (index, '%i')
+            abn_fmt = 'abn%s%s' % (index, '%i')
+        else:
+            t_fmt = 't%i'
+            abn_fmt = 'abn%i'
+    
+        # Get temperature steps and abundances
+        nsteps = self.params.getint(key, 'nsteps')
+        abundance = np.zeros(temperature.shape) 
+        for i in range(nsteps):
+            t = self.params.getquantity(key, t_fmt % i)
+            abn = self.params.getfloat(key, abn_fmt % (i+1))
+            abundance[temperature>=t] = abn
             if i==0:
-                abundance[temperature<T] = abn[i]
-                if len(Ts)==1:
-                    abundance[temperature>=T] = abn[i+1]
-            elif i==len(Ts)-1:
-                ind = (temperature<T) & (temperature>=Ts[i-1])
-                abundance[ind] = abn[i]
-                abundance[temperature>=T] = abn[i+1]
-            else:
-                ind = (temperature<T) & (temperature>=Ts[i-1])
-                abundance[ind] = abn[i]
+                abn_min = self.params.getfloat(key, abn_fmt % i)
+                if not ignore_min:
+                    abundance[temperature<t] = abn_min
+        
+        if ignore_min:
+            return abundance, abn_min
+        else:
+            return abundance
+        #Ts = np.atleast_1d(self.params.getquantity('Abundance', 't'))
+        #abn = np.array(self.params.getfloatlist('Abundance','abn'))
+        #assert len(Ts)==len(abn)-1
+        #abundance = np.ones(temperature.shape) * np.min(abn)
+
+        #for i,T in enumerate(Ts):
+        #    if i==0:
+        #        abundance[temperature<T] = abn[i]
+        #        if len(Ts)==1:
+        #            abundance[temperature>=T] = abn[i+1]
+        #    elif i==len(Ts)-1:
+        #        ind = (temperature<T) & (temperature>=Ts[i-1])
+        #        abundance[ind] = abn[i]
+        #        abundance[temperature>=T] = abn[i+1]
+        #    else:
+        #        ind = (temperature<T) & (temperature>=Ts[i-1])
+        #        abundance[ind] = abn[i]
 
         return abundance
 
+    def linewidth(self, x, y, z, temperature, minwidth=0.*u.km/u.s):
+        amu = 1.660531e-24 * u.g
+        atoms = self.params.getfloat('Velocity', 'atoms')
+        c_s2 = ct.k_B * temperature / (atoms * amu)
+        linewidth = np.sqrt(self.params.getquantity('Velocity', 'linewidth')**2
+                + c_s2)
+
+        # Outside the YSO
+        r = np.sqrt(x**2 + y**2 + z**2).reshape(linewidth.shape)
+        ind = r > self['Envelope','renv']
+
+        # Zero values should be replaced by a minimum value later
+        linewidth[ind] = minwidth
+         
+        return linewidth
