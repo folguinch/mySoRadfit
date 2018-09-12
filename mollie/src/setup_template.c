@@ -160,8 +160,8 @@ NH3 and CH3CN are LTE for both the rotational and hyperfine transitions
 
 /* This is for CH3CN  */
 
-	n_state = 120;
-	n_lines = 105;
+	n_state = $n_state; //120;
+	n_lines = $n_lines; //105;
 
 
 /* A nice pair for rotors */
@@ -350,7 +350,7 @@ running with fewer states.
     specific lines to be written. */
 
 
-        number_lines = ${nlines_rt};      
+        number_lines = ${nlines};      
         for (i=0;i<number_lines;i++){
                 linelist[i] = i+${line_id}-1;
         }
