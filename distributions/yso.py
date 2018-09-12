@@ -383,15 +383,20 @@ class YSO(Distribution):
     
         # Get temperature steps and abundances
         nsteps = self.params.getint(key, 'nsteps')
-        abundance = np.zeros(temperature.shape) 
-        for i in range(nsteps):
-            t = self.params.getquantity(key, t_fmt % i)
-            abn = self.params.getfloat(key, abn_fmt % (i+1))
-            abundance[temperature>=t] = abn
-            if i==0:
-                abn_min = self.params.getfloat(key, abn_fmt % i)
-                if not ignore_min:
-                    abundance[temperature<t] = abn_min
+        if nsteps==0:
+            abn = self.params.getfloat(key, 'abn')
+            abundance = np.ones(temperature.shape) * abn
+        else:
+            abundance = np.zeros(temperature.shape) 
+            for i in range(nsteps):
+                t = self.params.getquantity(key, t_fmt % i)
+                abn = self.params.getfloat(key, abn_fmt % (i+1))
+                abundance[temperature>=t] = abn
+                if i==0:
+                    abn_min = self.params.getfloat(key, abn_fmt % i)
+                    if not ignore_min:
+                        abundance[temperature<t] = abn_min
+            abundance[abundance==0.] = abn_min
         
         if ignore_min:
             return abundance, abn_min
@@ -425,10 +430,10 @@ class YSO(Distribution):
                 + c_s2)
 
         # Outside the YSO
-        r = np.sqrt(x**2 + y**2 + z**2).reshape(linewidth.shape)
-        ind = r > self['Envelope','renv']
+        #r = np.sqrt(x**2 + y**2 + z**2).reshape(linewidth.shape)
+        #ind = r > self['Envelope','renv']
 
-        # Zero values should be replaced by a minimum value later
-        linewidth[ind] = minwidth
+        ## Zero values should be replaced by a minimum value later
+        #linewidth[ind] = minwidth
          
         return linewidth
