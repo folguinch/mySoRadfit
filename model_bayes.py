@@ -125,11 +125,17 @@ class modelBayes(BaseModel):
 
     # This only works for a model with one source
     def get_pa(self):
-        return self.params['source']['Geometry','pa']
+        src = self.params.keys()[0]
+        if len(self.params.keys())>1:
+            logger.warn('Will use PA of %s', src)
+        return self.params[src]['Geometry','pa']
 
     # This only works for a model with one source
     def get_vlsr(self):
-        return self.params['source']['Velocity','vlsr']
+        src = self.params.keys()[0]
+        if len(self.params.keys())>1:
+            logger.warn('Will use v_LSR of %s', src)
+        return self.params[src]['Velocity','vlsr']
 
     def get_dimensions(self):
         """Get the number of parameters to fit"""
