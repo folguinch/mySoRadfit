@@ -9,11 +9,13 @@ from ..model_output import modelOutput
 def log_likelihood(data, model, outconfig, logger=get_logger(__name__)):
     # Setup RTs and run RTs
     files = rt_pipe(model, logger=logger)
-    exit()
 
     # Process output
     modelout = modelOutput(model.name, config=outconfig)
-    modelout.load_all(files, PA=model.get_pa(), vlsr=model.get_vlsr())
+    logger.debug('Model files: %r', files.keys())
+    modelout.load_all(files, data, PA=model.get_pa(), 
+            vlsr=model.get_vlsr())
+    exit()
 
     # Compare
     for d, mod in zip_str(data, modelout):
