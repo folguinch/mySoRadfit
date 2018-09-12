@@ -2,8 +2,9 @@ import os, shutil
 
 from myutils.logger import get_logger
 from myutils.decorators import register_function, REGISTERED_FUNCTIONS
+from myutils.external import run_mollie
 
-from ..utils.mollie import get_physical_props, write_setup
+from ..utils.mollie import get_physical_props_single, write_setup
 
 AVAILABLE_DUST_RT = set(['hyperion'])
 AVAILABLE_LINE_RT = set(['mollie'])
@@ -56,19 +57,32 @@ def mollie_pipe(model, from_file=False, logger=get_logger(__name__)):
     grids, cell_sizes, oversample = model.load_grids(rt)
 
     # Configure and write model
-    fitslist = get_physical_props(model.params, grids, cell_sizes,
-            MOLLIE, oversample=oversample, logger=logger)
-    exit()
+    if len(model.params.keys())==1:
+        key = model.params.keys()[0]
+        fitslist = get_physical_props_single(model.params[key], grids, 
+                cell_sizes, MOLLIE, oversample=oversample, logger=logger)
+    else:
+        raise NotImplementedError
+    logger.debug('FITS files: %r', fitslist)
 
     # Other configurations
     nproc = model.setup.getint(rt, 'nproc')
     server = model.setup.get(rt, 'server', fallback=None)
+    logger.info('Number of processes: %i', nproc)
+    if server:
+        logger.info('Will run in server: %s', server)
     model_dir = os.path.expanduser(model.config.get('DEFAULT', 'model_dir',
         fallback='./'))
     model_dir = os.path.join(model_dir, 'Model_%s' % model.name)
+    logger.info('Model directory: %s', model_dir)
 
     # Check the model directory tree exist or create it
-    exit()
+    try:
+        os.makedirs(model_dir)
+        logger.info('Model directory created: %s', os.path.basename(model_dir))
+    except:
+        logger.error('Model directory already exist')
+        exit()
 
     # Run model
     mollie_file = os.path.join(MOLLIE, 'ModelCube0')
@@ -78,10 +92,27 @@ def mollie_pipe(model, from_file=False, logger=get_logger(__name__)):
     for sect in model.images.sections():
         print('='*80)
         logger.info('Running model for: %s', sect)
-        model_name = rt.upper()+'_'+sect.upper()
+        model_name = rt.capitalize()+'_'+sect.upper()
+
+        # Move abundances
+        for i in range(len(cell_sizes)):
+            abn_fmt = 'abn_%s_%i.fits'
+            orig_abn = filter(lambda x: (abn_fmt % (sect,i)) in x, fitslist)
+            dest_abn = orig_abn[0].replace(abn_fmt % (sect,i), 
+                    'abn%i.fits' % i)
+            logger.info('Copying: %s -> %s', os.path.basename(orig_abn[0]),
+                    os.path.basename(dest_abn))
+            shutil.copy(orig_abn[0], dest_abn)
 
         # Setup RT for line
-        write_setup(sect, model, setup_template)
+        # When several sources are defined the observed inclination angle is
+        # defined by the first in the list. The definition of the sources
+        # distributions must consider the relative angles between different
+        # sources.
+        mname = model.params.keys()[0]
+        incl = model.params[mname]['Geometry','incl']
+        phi = model.params[mname]['Geometry','phi']
+        write_setup(sect, model, setup_template, phi=phi, incl=incl)
 
         # line RT
         if from_file:
@@ -107,8 +138,7 @@ def mollie_pipe(model, from_file=False, logger=get_logger(__name__)):
             logger.info('Moving model %s -> %s', os.path.basename(mollie_file),
                     model_name)
             shutil.move(mollie_file, os.path.join(model_dir, model_name))
-            file_track[section] = os.path.join(model_dir, model_name)
-
+            file_track[sect] = os.path.join(model_dir, model_name)
 
     # Move FITS files
     for ffile in fitslist:

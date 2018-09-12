@@ -313,9 +313,10 @@ def phys_oversampled_cart(x, y, z, yso, temp_func, oversample=5,
 
     return dens, v, temp
 
-def get_physical_props(yso_dict, grids, cell_sizes, save_dir, oversample=[3],
+@timed
+def get_physical_props_single(yso, grids, cell_sizes, save_dir, oversample=[3],
         dust_out=None, logger=get_logger(__name__)):
-    """Calculate and write the physical properties of the model.
+    """Calculate and write the physical properties a model with one source.
 
     Parameters:
         yso: the model parameters.
@@ -323,7 +324,10 @@ def get_physical_props(yso_dict, grids, cell_sizes, save_dir, oversample=[3],
         template: filename of the *define_model.c* file.
         logger: logging system.
     """
-    # Open template
+    # Models with more than one source should be treated in another function
+    # because the oversampling should be different.
+
+    # FITS list
     fitslist = []
 
     # Validate oversample
@@ -334,7 +338,27 @@ def get_physical_props(yso_dict, grids, cell_sizes, save_dir, oversample=[3],
     else:
         raise ValueError('The length of oversample != number of grids')
 
+    # Temperature function
+    if yso.params.get('DEFAULT', 'quantities_from'):
+        hmodel = yso.params.get('DEFAULT', 'quantities_from')
+        logger.info('Loading Hyperion model: %s', os.path.basename(hmodel))
+        hmodel = ModelOutput(os.path.expanduser(hmodel))
+        q = hmodel.get_quantities()
+        temperature = np.sum(q['temperature'].array[1:], axis=0)
+        r, th = q.r*u.cm, q.t*u.rad
+        temp_func = get_temp_func(yso.params, temperature, r, th)
+    elif dust_out is not None:
+        logger.info('Loading Hyperion model: %s', os.path.basename(dust_out))
+        hmodel = ModelOutput(os.path.expanduser(dust_out))
+        q = hmodel.get_quantities()
+        temperature = np.sum(q['temperature'].array[1:], axis=0)
+        r, th = q.r*u.cm, q.t*u.rad
+        temp_func = get_temp_func(yso.params, temperature, r, th)
+    else:
+        raise NotImplementedError
+
     # Start from smaller to larger grid
+    inv_i = len(grids) - 1
     for i,(grid,cellsz) in enumerate(zip(grids, cell_sizes)):
         # Initialize grid axes
         print '='*80
@@ -349,52 +373,14 @@ def get_physical_props(yso_dict, grids, cell_sizes, save_dir, oversample=[3],
         yi = np.unique(y)
         zi = np.unique(z)
 
-        # Initial value
-        dens = None
-        temp_func = None
+        # Density and velocity
+        dens, (vx, vy, vz), temp = phys_oversampled_cart(
+                xi, yi, zi, yso, temp_func, oversample=oversample[i], 
+                logger=logger)
 
-        # Get the total values
-        for yso_name, yso in yso_dict.items():
-            logger.info('Evaluating the functions for source: %s', yso_name)
-            if temp_func is None:
-                # Load temperature function
-                # By definition the temperature function is the same for all
-                # Sources, because is calculated over the whole grid with all
-                # sources in the dust continuum
-                if yso.params.get('DEFAULT', 'quantities_from'):
-                    hmodel = yso.params.get('DEFAULT', 'quantities_from')
-                    logger.info('Loading Hyperion model: %s', os.path.basename(hmodel))
-                    hmodel = ModelOutput(os.path.expanduser(hmodel))
-                    q = hmodel.get_quantities()
-                    temperature = np.sum(q['temperature'].array[1:], axis=0)
-                    r, th = q.r*u.cm, q.t*u.rad
-                    temp_func = get_temp_func(yso.params, temperature, r, th)
-                elif dust_out is not None:
-                    logger.info('Loading Hyperion model: %s', os.path.basename(dust_out))
-                    hmodel = ModelOutput(os.path.expanduser(dust_out))
-                    q = hmodel.get_quantities()
-                    temperature = np.sum(q['temperature'].array[1:], axis=0)
-                    r, th = q.r*u.cm, q.t*u.rad
-                    temp_func = get_temp_func(yso.params, temperature, r, th)
-                else:
-                    raise NotImplementedError
-
-            # Density and velocity
-            dens_aux, (vx_aux, vy_aux, vz_aux), temp_aux = phys_oversampled_cart(
-                    xi, yi, zi, yso, temp_func, oversample=oversample[i], 
-                    logger=logger)
-            if dens is None:
-                dens = dens_aux
-                vx = vx_aux
-                vy = vy_aux
-                vz = vz_aux
-                temp = temp_aux
-            else:
-                # Temperature should not change
-                dens = dens + dens_aux
-                vx = vx + vx_aux
-                vy = vy + vy_aux
-                vz = vz + vz_aux
+        # Replace out of range values
+        dens[dens.cgs<=0./u.cm**3] = 10./u.cm**3
+        temp[np.logical_or(np.isnan(temp.value), temp.value<2.7)] = 2.7 * u.K
 
         # Replace the inner region by rebbining the previous grid
         if i>0:
@@ -447,27 +433,30 @@ def get_physical_props(yso_dict, grids, cell_sizes, save_dir, oversample=[3],
         zprev = zi
 
         # Linewidth and abundance
-        linewidth = np.zeros(temp.shape) * u.km/u.s
-        abundance = np.zeros(temp.shape)
-        for j, yso in enumerate(yso_dict.values()):
-            linewidth = linewidth + yso.linewidth(x, y, z, temp)
-            abn, min_abundance = yso.abundance(x, y, z, temp, 
-                    index=j+1, ignore_min=True)
-            abundance = abundance + abn
+        linewidth = yso.linewidth(x, y, z, temp).to(u.cm/u.s)
 
-        # Replace out of range values
-        dens[dens.cgs<=0./u.cm**3] = 10./u.cm**3
-        temp[np.isnan(temp.value)] = 2.7 * u.K
-        linewidth[linewidth==0.*u.km/u.s] = 0.5 * u.km / u.s
-        abundance[abundance==0.] = min_abundance
+        # Abundance per molecule
+        abns = {}
+        abn_fmt = 'abn_%s_%i'
+        j = 1
+        for section in yso.params.sections():
+            if not section.lower().startswith('abundance'):
+                continue
+            mol = yso[section, 'molecule']
+            abns[abn_fmt % (mol, inv_i)] = yso.abundance(x, y, z, temp, 
+                    index=j, ignore_min=False)
+            j = j+1
 
         # Write FITS
+        kw = {'temp%i'%inv_i: temp.value, 'dens%i'%inv_i: dens.cgs.value, 
+                'vx%i'%inv_i: vx.cgs.value, 'vy%i'%inv_i: vy.cgs.value, 
+                'vz%i'%inv_i: vz.cgs.value, 
+                'lwidth%i'%inv_i: linewidth.cgs.value}
+        kw.update(abns)
         fitsnames = write_fits(os.path.expanduser(save_dir), 
-                **{'temp%i'%i: temp.value, 'dens%i'%i: dens.cgs.value, 
-                'vx%i'%i: vx.cgs.value, 'vy%i'%i: vy.cgs.value, 'vz%i'%i:
-                vz.cgs.value, 'abn%i'%i: abundance,
-                'lwidth%i'%i: linewidth.cgs.value})
+                **kw)
         fitslist += fitsnames
+        inv_i = inv_i - 1
 
     return fitslist
 
@@ -591,7 +580,8 @@ def set_physical_props(yso, grids, cell_sizes, save_dir, oversample=3,
 
     return fitslist
 
-def write_setup(section, model, template, rt='mollie'):
+def write_setup(section, model, template, rt='mollie', incl=0*u.deg,
+        phi=0*u.deg):
     # Open template
     with open(os.path.expanduser(template)) as ftemp:
         temp = Template(ftemp.read())
@@ -608,13 +598,15 @@ def write_setup(section, model, template, rt='mollie'):
             'radius': fmt % radius.value, 
             'nphi': model.setup.get(rt, 'nphi'), 
             'nth': model.setup.get(rt, 'nth'), 
-            'nlines_rt': model.setup.get(rt, 'nlines_rt'),
+            'nlines': model.images.get(section, 'nlines'),
             'line_id': model.images.get(section, 'line_id'),
-            'phi': model.images.get(section, 'phi'),
-            'th': model.images.get(section, 'th'),
+            'th': incl.to(u.deg).value,
+            'phi': phi.to(u.deg).value,
             'npix': model.images.get(section, 'npix'),
             'pixsize': model.images.getquantity(section,
-                'pixsize').to(u.pc).value}
+                'pixsize').to(u.pc).value,
+            'n_state': model.images.get(section,'n_state'),
+            'n_lines': model.images.get(section,'n_lines')}
 
     # Write file
     dirname = os.path.dirname(os.path.expanduser(template))
@@ -976,4 +968,229 @@ def load_model(model, source, filename, logger, old=False, older=False,
 
     return images
 
+def load_model_cube(model_file, source, filename, pa=0*u.deg, 
+        logger=get_logger(__name__), velocity=True, bunit=u.Jy):
+    """Load a Mollie model.
+
+    Written by: K. G. Johnston.
+    Modified by: F. Olguin
+    References to older versions were removed
+
+    Parameters:
+        model: model file name.
+        source (astroSource): source information.
+        logger: logger.
+        write: type of image to write (default: data cube in Jy).
+        velocity: output cube 3rd axis in velocity or frequency.
+        pa: source position angle.
+    """
+
+    # Open file
+    logger.info('Opening file: %s', model)
+    f = open(model, "rb")
+    endian = '>'
+    byte = f.read(4)
+    nlines = struct.unpack(endian+'l', byte)[0]
+    
+    # Swap bytes
+    swap_bytes = False
+    if nlines > 200:
+        swap_bytes = True
+        endian = '<'
+    logger.info('Swapping bytes? %s', swap_bytes)
+
+    # Number of lines
+    nlines = struct.unpack(endian+'l', byte)[0]
+    logger.info('Number of lines: %i', nlines)
+
+    # Number of viewing angles
+    nviews = struct.unpack(endian+'l',f.read(4))[0]
+    logger.info('Number of viewing angles: %i', nviews)
+
+    # Number of channels
+    nchan = np.zeros(nlines,dtype=int)
+    for line in range(nlines):
+        nch = struct.unpack(endian+'l',f.read(4))[0]
+        nchan[line] = nch
+    logger.info('Number of channels: %r', nchan)
+
+    # Grid parameters
+    nx = struct.unpack(endian+'l',f.read(4))[0]
+    ny = struct.unpack(endian+'l',f.read(4))[0]
+    cellx = struct.unpack(endian+'f',f.read(4))[0] * u.pc
+    celly = struct.unpack(endian+'f',f.read(4))[0] * u.pc
+    beamx = struct.unpack(endian+'f',f.read(4))[0] * u.pc
+    beamy = struct.unpack(endian+'f',f.read(4))[0] * u.pc
+    logger.info('Grid size nx=%i, ny=%i', nx, ny)
+    logger.info('Cell size %sx%s', cellx, celly)
+
+    # Line names
+    maxname = 20
+    linename = (nlines)*['']
+    for i in range(nlines):
+        for j in range(maxname):
+            bytvar = struct.unpack(endian+'c',f.read(1))[0]
+            linename[i] += bytvar.decode('ascii')
+        linename[i] = linename[i].strip()
+
+    # Rest frequencies
+    restfreq = np.zeros(nlines) * u.Hz
+    for i in range(nlines):
+        restfreq[i] = struct.unpack(endian+'d',f.read(8))[0]*u.Hz
+        logger.info('The lines are:')
+        logger.info('%s at %s', linename[i], restfreq[i].to(u.GHz))
+
+    # Channel velocity ranges
+    maxch = max(nchan)
+    chvel = np.zeros((nlines,maxch)) * u.cm/u.s
+    for i in range(nlines):
+        for n in range(nchan[i]):
+            chvel[i,n] = struct.unpack(endian+'f',f.read(4))[0] * u.cm/u.s
+        logger.info('Velocity range for line %s:  %s, %s', linename[i],
+                    chvel[i,0].to(u.km/u.s), chvel[i,nchan[i]-1].to(u.km/u.s))
+
+    # Viewing angles
+    lng = np.zeros(nviews) * u.deg
+    lat = np.zeros(nviews) * u.deg
+    for i in range(nviews):
+        lng[i] = struct.unpack(endian+'f',f.read(4))[0] * u.deg
+        lat[i] = struct.unpack(endian+'f',f.read(4))[0] * u.deg
+    logger.info('Longitudes: %r', lng)
+
+    # Fix inclination convention to Hyperion
+    lat = 90.*u.deg - np.array(lat)
+    logger.info('Latitudes: %r', lat)
+
+    # RA axis
+    xc = np.zeros(nx)
+    for i in range(nx):
+        xc[i] = struct.unpack(endian+'f',f.read(4))[0]
+
+    # Dec axis
+    yc = np.zeros(ny)
+    for i in range(ny):
+        yc[i] = struct.unpack(endian+'f',f.read(4))[0]
+
+    # Data
+    data = np.ones((nlines,nviews,nx,ny,maxch)) * np.nan
+    for l in range(nlines):
+        data_bytes = f.read(4 * nviews * nx * ny * nchan[l])
+        data[l,:,:,:,:nchan[l]] = np.fromstring(data_bytes, 
+                dtype=endian + 'f4').reshape(nviews, nx, ny, nchan[l])
+        logger.info('Max in line %i is %.3e', l, np.nanmax(data[l]))
+    f.close()
+
+    logger.info('Min and max brightness in data set: %.3e, %.3e',
+                np.nanmin(data), np.nanmax(data))
+
+    if linename[0].strip().lower().startswith("mc"):
+        logger.warn('Remember to run CH3CN_CUBE after LOAD_MODEL\n' + \
+                    'in order to stack the CH3CN lines into a single spectrum')
+
+    # Set up header common to all files
+    ra, dec = source.position.ra, source.position.dec
+    distance = source.distance.to(u.pc)
+    header_template = fits.Header()
+    header_template['OBJECT'] = 'MODEL'
+    header_template['TELESCOP'] = 'MOLLIE'
+    header_template['INSTRUME'] = 'MOLLIE'
+    header_template['OBSERVER'] = 'MOLLIE'
+    header_template['CTYPE1'] = 'RA---SIN'
+    header_template['CTYPE2'] = 'DEC--SIN'
+    header_template['CUNIT1'] = 'degree'
+    header_template['CUNIT2'] = 'degree'
+    header_template['CRPIX1'] = nx / 2.
+    header_template['CRPIX2'] = ny / 2. + 1.
+    header_template['CDELT1'] = -1.*np.abs(np.degrees((cellx.si/distance.si).value))
+    header_template['CDELT2'] = np.degrees((celly.si/distance.si).value)
+    header_template['CRVAL1'] = ra.to(u.deg).value
+    header_template['CRVAL2'] = dec.to(u.deg).value
+    header_template['EPOCH'] = 2000
+    header_template['EQUINOX'] = 2000.
+    if pa or source.get_quantity('pa') is not None:
+        header_template['CROTA1'] = 0
+        if pa is None:
+            pa = source.get_quantity('pa')
+        header_template['CROTA2'] = (360*u.deg - pa.to(u.deg)).value
+
+    # Line indices
+    minimum_line = nlines - 1
+    minimum_velocity = chvel[nlines - 1,0]
+
+    # Now figure out the velocity shift due to line frequencies
+    velocity_shift = -1. * ct.c.cgs * (restfreq - restfreq[minimum_line]) / \
+            restfreq[minimum_line]
+    for line in range(nlines):
+        logger.info('Velocity shift for line %s: %s', linename[line],
+                linevelocity_shift[line].to(u.km/u.s))
+    
+    # Maximum velocity
+    maximum_velocity = chvel[0,nchan[0]-1] + velocity_shift[0]
+    logger.info('Min and max velocities: %s, %s',
+                minimum_velocity.to(u.km/u.s), maximum_velocity.to(u.km/u.s))
+
+    # Make a new velocity array starting at the minimum velocity
+    dv = (chvel[0,1]-chvel[0,0])
+    logger.info('Channel width %s', dv.to(u.km/u.s))
+    number_channels = int(((maximum_velocity.cgs - minimum_velocity.cgs) /\
+            dv.cgs).value) + 1
+    logger.info('Number of channels: %i', number_channels)
+    velo = np.linspace(0., number_channels-1., number_channels)*dv + \
+            minimum_velocity
+    logger.info('New velocity range [%s:%s]', velo[0].to(u.km/u.s),
+                velo[number_channels-1].to(u.km/u.s))
+
+    # New array to hold 1 line with all the spectra
+    cube = np.zeros((nviews,nx,ny,number_channels))
+    for line in range(nlines):
+        for i in range(nchan[line]):
+            j = int(((chvel[line,i].cgs + velocity_shift[line].cgs -\
+                    velo[0].cgs)/dv.cgs).value)
+            cube[:,:,:,j] = (data[line,:,:,:,i] + cube[:,:,:,j])
+    nchan[0] = number_channels
+
+    # Save images per viewing angle
+    images = []
+    for v in range(nviews):
+        # Header
+        header = header_template.copy()
+        header['LINE'] = '%s (all)' % linename[0].split[0]
+
+        # Save velocity or frequency
+        cdelt3 = dv.to(u.km/u.s)
+        if velocity:
+            header['CTYPE3'] = 'VELO-LSR'
+            header['CUNIT3'] = 'KM/S'
+            crval3 = minimum_velocity.to(u.km/u.s)
+            logger.info("Channel width %s", cdelt3)
+        else:
+            header['CTYPE3'] = 'FREQ'
+            header['CUNIT3'] = 'Hz'
+            crval3 = (restfreq[0]*(1. - cdelt3.cgs/ct.c.cgs)).to(u.Hz)
+            cdelt3 = (restfreq[0]*cdelt3.cgs/ct.c.cgs).to(u.Hz)
+            logger.info("Channel width %s", cdelt3.to(u.MHz))
+        header['CRPIX3'] = 1.
+        header['CDELT3'] = cdelt3.value
+        header['CRVAL3'] = crval3.value
+        header['RESTFREQ'] = restfreq[l].to(u.Hz).value
+
+        # Save file
+        if bunit is u.K:
+            header['BUNIT'] = 'K'
+            fits.writeto(filename, cube[v,:nchan[0]].transpose(), 
+                         header, overwrite=True)
+            images += [Data3D(filename)]
+        elif bunit is u.Jy:
+            pixel_area_deg = np.abs(header['CDELT1']) * header['CDELT2']
+            K_to_Jy = (header['RESTFREQ']*u.Hz).to(u.GHz).value**2 * \
+                    3600**2 / 1.224e6 / 1.1331 * pixel_area_deg
+            header['BUNIT'] = 'JY/PIXEL'
+            fits.writeto(filename,
+                    cube[v,:,:,:nchan[0]].transpose() * K_to_Jy, header, 
+                    overwrite=True)
+            images += [Data3D(filename)]
+        else:
+            raise NotImplementedError
+
+    return images
 
