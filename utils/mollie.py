@@ -1151,7 +1151,7 @@ def load_model_cube(model_file, source, filename, pa=0*u.deg,
     for v in range(nviews):
         # Header
         header = header_template.copy()
-        header['LINE'] = '%s (all)' % linename[0].spliti('(')[0]
+        header['LINE'] = '%s (all)' % linename[0].split('(')[0]
 
         # Save velocity or frequency
         cdelt3 = dv.to(u.km/u.s)
