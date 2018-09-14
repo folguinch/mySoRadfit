@@ -969,7 +969,8 @@ def load_model(model, source, filename, logger, old=False, older=False,
     return images
 
 def load_model_cube(model_file, source, filename, pa=0*u.deg, 
-        logger=get_logger(__name__), velocity=True, bunit=u.Jy):
+        logger=get_logger(__name__,__package__+'.log'), velocity=True, 
+        bunit=u.Jy):
     """Load a Mollie model.
 
     Written by: K. G. Johnston.
@@ -986,8 +987,8 @@ def load_model_cube(model_file, source, filename, pa=0*u.deg,
     """
 
     # Open file
-    logger.info('Opening file: %s', model)
-    f = open(model, "rb")
+    logger.info('Opening file: %s', os.path.basename(model_file))
+    f = open(model_file, "rb")
     endian = '>'
     byte = f.read(4)
     nlines = struct.unpack(endian+'l', byte)[0]
@@ -1055,11 +1056,11 @@ def load_model_cube(model_file, source, filename, pa=0*u.deg,
     for i in range(nviews):
         lng[i] = struct.unpack(endian+'f',f.read(4))[0] * u.deg
         lat[i] = struct.unpack(endian+'f',f.read(4))[0] * u.deg
-    logger.info('Longitudes: %r', lng)
+    logger.info('Longitudes: %s', lng)
 
     # Fix inclination convention to Hyperion
-    lat = 90.*u.deg - np.array(lat)
-    logger.info('Latitudes: %r', lat)
+    lat = 90.*u.deg - lat
+    logger.info('Latitudes: %s', lat)
 
     # RA axis
     xc = np.zeros(nx)
@@ -1079,13 +1080,8 @@ def load_model_cube(model_file, source, filename, pa=0*u.deg,
                 dtype=endian + 'f4').reshape(nviews, nx, ny, nchan[l])
         logger.info('Max in line %i is %.3e', l, np.nanmax(data[l]))
     f.close()
-
     logger.info('Min and max brightness in data set: %.3e, %.3e',
                 np.nanmin(data), np.nanmax(data))
-
-    if linename[0].strip().lower().startswith("mc"):
-        logger.warn('Remember to run CH3CN_CUBE after LOAD_MODEL\n' + \
-                    'in order to stack the CH3CN lines into a single spectrum')
 
     # Set up header common to all files
     ra, dec = source.position.ra, source.position.dec
@@ -1122,7 +1118,7 @@ def load_model_cube(model_file, source, filename, pa=0*u.deg,
             restfreq[minimum_line]
     for line in range(nlines):
         logger.info('Velocity shift for line %s: %s', linename[line],
-                linevelocity_shift[line].to(u.km/u.s))
+                velocity_shift[line].to(u.km/u.s))
     
     # Maximum velocity
     maximum_velocity = chvel[0,nchan[0]-1] + velocity_shift[0]
@@ -1154,7 +1150,7 @@ def load_model_cube(model_file, source, filename, pa=0*u.deg,
     for v in range(nviews):
         # Header
         header = header_template.copy()
-        header['LINE'] = '%s (all)' % linename[0].split[0]
+        header['LINE'] = '%s (all)' % linename[0].spliti('(')[0]
 
         # Save velocity or frequency
         cdelt3 = dv.to(u.km/u.s)
@@ -1175,8 +1171,10 @@ def load_model_cube(model_file, source, filename, pa=0*u.deg,
         header['RESTFREQ'] = restfreq[l].to(u.Hz).value
 
         # Save file
+        logger.info('Cube file name: %s', os.path.basename(filename))
         if bunit is u.K:
             header['BUNIT'] = 'K'
+            logger.info('Saving cube with units: K')
             fits.writeto(filename, cube[v,:nchan[0]].transpose(), 
                          header, overwrite=True)
             images += [Data3D(filename)]
@@ -1185,6 +1183,7 @@ def load_model_cube(model_file, source, filename, pa=0*u.deg,
             K_to_Jy = (header['RESTFREQ']*u.Hz).to(u.GHz).value**2 * \
                     3600**2 / 1.224e6 / 1.1331 * pixel_area_deg
             header['BUNIT'] = 'JY/PIXEL'
+            logger.info('Saving cube with units: Jy/pixel')
             fits.writeto(filename,
                     cube[v,:,:,:nchan[0]].transpose() * K_to_Jy, header, 
                     overwrite=True)
