@@ -978,12 +978,13 @@ def load_model_cube(model_file, source, filename, pa=0*u.deg,
     References to older versions were removed
 
     Parameters:
-        model: model file name.
+        model_file (str): model file name.
         source (astroSource): source information.
-        logger: logger.
-        write: type of image to write (default: data cube in Jy).
-        velocity: output cube 3rd axis in velocity or frequency.
-        pa: source position angle.
+        filename (str): output file name.
+        pa (astropy.quantity, default=0.): source position angle.
+        logger (logging, optional): logger.
+        velocity (bool, default=True): output cube 3rd axis in velocity or frequency.
+        bunit (astropy.unit, default=Jy): output flux unit.
     """
 
     # Open file
