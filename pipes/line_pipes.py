@@ -1,3 +1,5 @@
+import os
+
 import astropy.units as u
 from myutils.decorators import register_function
 from myutils.logger import get_logger
@@ -18,14 +20,16 @@ def mollie_base_pipe(model_file, source, filename=None, PA=0.*u.deg,
 
     # Rotate & save
     if PA!=0.*u.deg:
+        logger.info('Rotating cube')
         rotate(filename, rotated, z=1.2, cube=True)
+        logger.info('Cube written: %s', os.path.basename(rotated))
         return rotated
     else:
         return filename
 
-def casa_base_pipe(model_file, source, PA):
+def casa_base_pipe(config, model_file, source, PA):
     # Run basic pipeline
-    filename = mollie_base_pipe(config, model_file, ra, dec, PA=PA)
+    filename = mollie_base_pipe(model_file, source, PA=PA)
 
     # Run CASA
 

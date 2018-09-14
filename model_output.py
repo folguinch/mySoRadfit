@@ -22,7 +22,7 @@ class modelOutput(Container):
     #    """
     #    super(modelOutput, self).__init__(name, config=config)
 
-    def load_data(self, data_name, model_file, ra, dec, PA=0., vlsr=0.):
+    def load_data(self, data_name, model_file, source, PA=0., vlsr=0.):
         assert data_name in self.config.sections()
 
         pipe = self.config[data_name]['pipe']
