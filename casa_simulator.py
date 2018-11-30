@@ -1,4 +1,4 @@
-import os, argparse, shutil
+import os, argparse, shutil, time
 from ConfigParser import ConfigParser, NoOptionError
 
 """Simulate observations using CASA
@@ -120,7 +120,7 @@ def simulate(conf, image, config):
     except:
         pass
 
-    if config.get(conf,'thermalnoise'):
+    if thermalnoise: #config.get(conf,'thermalnoise'):
         return str('%s/%s.%s.noisy.ms' % (conf, conf,
             str(config.get(conf,'antenna'))))
     else:
@@ -233,6 +233,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-c', nargs=1,
             help='Casa parameter')
+    parser.add_argument('--nologger', action='store_true',
+            help='Casa nologger arg')
+    parser.add_argument('--nogui', action='store_true',
+            help='Casa nogui arg')
+    parser.add_argument('--log2term', action='store_true',
+            help='Casa log2term arg')
     parser.add_argument('-i', action='store_true',
             help='Interactive cleaning')
     parser.add_argument('config', type=str, action=ValidatePath,
@@ -242,6 +248,10 @@ def main():
     parser.add_argument('output', type=str, action=ValidatePath,
             help='Output image file name')
     args = parser.parse_args()
+
+    #logger = Logger(__file__.replace('.py', '.log'))
+    logger = Logger(file_name=os.path.join(os.path.dirname(args.output), 
+        'casa_simulator.log'))
 
     # Load configuration files
     config = ConfigParser()
@@ -271,8 +281,12 @@ def main():
     save_image(conf, 'concat', filename, restfreq=restfreq)
 
     # Clean
-    for conf in config.sections():
-        shutil.rmtree(conf)
+    #time.sleep(60)
+    #for conf in config.sections():
+    #    #shutil.rmtree(conf)
+    #    sig = os.system('rm -rf CONF*')
+    #    print sig
+    print 'Finished'
 
 if __name__=='__main__':
     main()
