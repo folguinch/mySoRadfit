@@ -1,5 +1,5 @@
+import numpy as np
 import emcee as mc
-
 from myutils.logger import get_logger
 
 from .rt_pipe import rt_pipe
@@ -30,8 +30,12 @@ def log_posterior(theta, *args, **kwargs):
     logprior = model.get_logpriors()
 
     # Get likelihood
-    loglikelihood = log_likelihood(args[0], model, kwargs['outconfig'],
-            logger=kwargs['logger'])
+    if logprior != -np.inf:
+        loglikelihood = log_likelihood(args[0], model, kwargs['outconfig'],
+                logger=kwargs['logger'])
+    else:
+        kwargs['logger'].info('Logprior is inf, skipping model')
+        return logprior
     exit()
 
     # Posterior
