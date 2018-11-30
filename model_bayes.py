@@ -91,7 +91,7 @@ class modelBayes(BaseModel):
             if vmin < val < vmax:
                 return 0.
             else:
-                return np.inf
+                return -np.inf
         else:
             raise NotImplementedError
 
