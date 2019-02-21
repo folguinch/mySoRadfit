@@ -2,6 +2,7 @@ import numpy as np
 from hyperion.grid import OctreeGrid
 
 from .grid import GridABC
+from .cell import Cell
 
 class Octree(GridABC):
     """Defines a Octree grid.
@@ -32,7 +33,17 @@ class Octree(GridABC):
             center[0]-ysize/2., center[0]+ysize/2.,
             center[0]-zsize/2., center[0]+zsize/2., density=0.)]
 
-    def build(self, params, density, criterion, max_depth=10):
+    @property
+    def points(self):
+        """Get the grid position points."""
+        points = []
+        for cell in self.grid:
+            points += [list(cell.center)]
+        points = np.array(points)
+
+        return points[:,0], points[:,1], points[:,2]
+
+    def build(self, density, criterion, max_depth=10):
         """Build the grid.
 
         For building the grid, the criterion is used to determine whether the
@@ -51,16 +62,17 @@ class Octree(GridABC):
         """
         assert len(self.grid)==1
 
-        self.refined, self.grid = build_grid(self.refined, self.grid, 
+        self.refined, self.grid = self.build_grid(self.refined, self.grid, 
                 density, criterion, max_depth, 1)
 
     @staticmethod
-    def build_grid(refined, grid, params, density, criterion, max_depth, step):
+    def build_grid(refined, grid, density, criterion, max_depth, step):
         grid0 = grid[-1]
         for cell in grid0.divide_by(2.):
             # Evaluate density
             aux = Cell(*cell)
-            aux['density'] = density(*aux.center, params)
+            x0, y0, z0 = aux.center
+            aux['density'] = density(x0, y0, z0)
             grid.append(aux)
             
             # Determine whether grid needs refinement
