@@ -57,7 +57,7 @@ class Cell(object):
     @property
     def sizes(self):
         """Cell size per axis."""
-        return np.abs(walls[0]-walls[1]) for walls in self
+        return [np.abs(walls[0]-walls[1]) for walls in self]
 
     def __iter__(self):
         return self
@@ -82,7 +82,7 @@ class Cell(object):
         wall_pairs = []
         for walls in self:
             step = np.abs(walls[0]-walls[1]) / n
-            aux = np.min(walls)
+            aux = min(walls)
             wall_pairs += [[(aux+step*i,aux+step*(i+1)) for i in range(int(n))]]
          
         # New cells

@@ -1,10 +1,15 @@
 from abc import ABCMeta, abstractmethod
 
+import numpy as np
+
+from .cell import Cell
+
 class GridABC(object):
     """Defines a grid ABC.
 
     Attibutes:
-        cells: grid cells.
+        grid: grid cells.
+        density: grid density.
     """
     __metaclass__ = ABCMeta
 
@@ -14,7 +19,8 @@ class GridABC(object):
         self.density = None
 
     def set_density(self, func, params):
-        self.density = func(*self.coords, params)
+        x, y, z = self.coords
+        self.density = func(x, y, z, params)
 
     @property
     def coords(self):
